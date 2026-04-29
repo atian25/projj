@@ -55,20 +55,33 @@ Short names use the configured `platform`. `--base` overrides the root directory
 
 ### Post-clone hooks
 
-`projj clone` can run tasks after a repository is cloned for the first time:
+`projj clone` can run hook steps after a repository is cloned for the first time. `[[hooks]]` is TOML syntax for an array of hook entries, so you can define more than one hook:
 
 ```toml
 [tasks]
-setup-git-user = "git config user.email me@example.com"
 zoxide = "zoxide add ."
 
 [[hooks]]
 event = "post_clone"
-filter = "github.com/atian25/*"
-tasks = ["setup-git-user", "zoxide"]
+filter = "github.com/*/*"
+tasks = [
+  "git config user.name TZ",
+  "git config user.email atian25@qq.com",
+  "zoxide",
+]
+
+[[hooks]]
+event = "post_clone"
+filter = "code.byted.org/*/*"
+tasks = [
+  "git config user.name TZ",
+  "git config user.email liuyong.tz@bytedance.com",
+]
 ```
 
-Hooks only run after a new clone succeeds. If the target repository already exists, hooks are skipped. Hook tasks run in the cloned repository and use the same task resolution as `projj run`.
+Hooks only run after a new clone succeeds. If the target repository already exists, hooks are skipped. Hook steps run in the cloned repository and use the same task resolution as `projj run`: each item in `tasks` can be a local project task, a global `[tasks]` name, or a raw shell command. Multi-line TOML arrays are supported and are usually clearer for hooks with several steps.
+
+Hook filters use repository selectors. A scanned repository key looks like `github.com/owner/repo`, so host-wide rules should use patterns such as `github.com/*/*` or `code.byted.org/*/*`.
 
 Hook tasks receive these environment variables:
 
