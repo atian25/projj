@@ -33,7 +33,7 @@ shell 集成通过 finalizer 文件完成。CLI 可以请求当前 shell 执行�
 projj init
 projj clone <repo> [--base <path>] [--no-cd]
 projj find [搜索词] [--list]
-projj run <命令或任务> [--all] [--match <regex>] [-- ...args]
+projj run <命令或任务> [--all] [--filter <selector>] [-- ...args]
 projj shell-init <zsh|bash|fish>
 ```
 
@@ -123,7 +123,7 @@ base/host/owner/repo/.git
 
 如果没有加载 shell 集成，而默认行为需要跳转，`find` 打印选中的路径，并提示如何启用 shell 集成。`--list` 必须保持脚本友好，不在 stdout 输出额外提示。
 
-### `projj run <命令或任务> [--all] [--match <regex>] [-- ...args]`
+### `projj run <命令或任务> [--all] [--filter <selector>] [-- ...args]`
 
 运行配置任务或原始 shell 命令。
 
@@ -134,7 +134,15 @@ base/host/owner/repo/.git
 
 不带 `--all` 时，命令在当前工作目录运行。
 
-带 `--all` 时，扫描全部仓库，并在每个仓库路径下运行命令。`--match <regex>` 用 `host/owner/repo` 过滤仓库。
+带 `--all` 时，扫描全部仓库，并在每个仓库路径下运行命令。带 `--filter <selector>` 时，扫描全部仓库并用面向用户的仓库选择器过滤执行目标，不要求同时传 `--all`。
+
+选择器大小写不敏感，匹配以下字段：
+
+- repo 名
+- `owner/repo`
+- `host/owner/repo`
+
+如果选择器包含 `*`，按 glob 风格做完整匹配；否则按子串匹配。
 
 `--all` 会先输出本次展开后的真实命令和匹配仓库数量，再在每个仓库执行前输出仓库 key 和 `$ <命令>`。如果命令本身没有输出，`projj` 不额外伪造结果。
 
@@ -244,4 +252,4 @@ git@<platform>:<owner>/<repo>.git
 - 加载默认配置并展开 `~`。
 - 只有设置 `PROJJ_FINALIZER_FILE` 时才写入 `cd:` finalizer 动作。
 - `run` 先解析任务名，再回退到原始 shell 命令。
-- `run --all` 使用 `--match` 过滤仓库。
+- `run --all` 使用 `--filter` 过滤仓库。

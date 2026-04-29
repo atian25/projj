@@ -18,10 +18,31 @@ export function resolveCommand(
   return `${command} ${args.map(shellQuote).join(" ")}`;
 }
 
-export function filterReposByMatch(repos: Repo[], pattern?: string): Repo[] {
-  if (!pattern) return repos;
-  const regex = new RegExp(pattern);
-  return repos.filter((repo) => regex.test(repo.key));
+export function filterReposBySelector(repos: Repo[], selector?: string): Repo[] {
+  const normalizedSelector = selector?.trim();
+  if (!normalizedSelector) return repos;
+
+  if (normalizedSelector.includes("*")) {
+    const regex = globToRegex(normalizedSelector);
+    return repos.filter((repo) => repoSelectorFields(repo).some((field) => regex.test(field)));
+  }
+
+  const needle = normalizedSelector.toLowerCase();
+  return repos.filter((repo) =>
+    repoSelectorFields(repo).some((field) => field.toLowerCase().includes(needle)),
+  );
+}
+
+function repoSelectorFields(repo: Repo): string[] {
+  return [repo.name, `${repo.owner}/${repo.name}`, repo.key];
+}
+
+function globToRegex(pattern: string): RegExp {
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[\\^$+?.()|[\]{}]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`, "i");
 }
 
 export function envWithoutFinalizer(

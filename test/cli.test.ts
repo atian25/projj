@@ -192,7 +192,7 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "git status --short", cwd }]);
   });
 
-  test("run --all with --match executes only matching repositories", async () => {
+  test("run with --filter executes only matching repositories without --all", async () => {
     const home = await tempDir();
     const base = join(home, "repos");
     const projjPath = await createRepo(base, "github.com", "atian25", "projj");
@@ -213,7 +213,7 @@ describe("cli", () => {
       },
     });
 
-    const code = await cli.run(["run", "status", "--all", "--match", "atian25"]);
+    const code = await cli.run(["run", "status", "--filter", "atian25/*"]);
 
     expect(code).toBe(0);
     expect(stdout.join("")).toBe(
@@ -221,6 +221,32 @@ describe("cli", () => {
         "==> github.com/atian25/projj\n" +
         "$ git status --short\n",
     );
+    expect(calls).toEqual([{ command: "git status --short", cwd: projjPath }]);
+  });
+
+  test("run --all with --filter behaves like --filter", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const projjPath = await createRepo(base, "github.com", "atian25", "projj");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "status", "--all", "--filter", "atian25/*"]);
+
+    expect(code).toBe(0);
     expect(calls).toEqual([{ command: "git status --short", cwd: projjPath }]);
   });
 

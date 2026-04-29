@@ -151,7 +151,7 @@ Usage:
   projj init
   projj clone <repo> [--base <path>] [--no-cd]
   projj find [搜索词] [--list]
-  projj run <命令或任务> [--all] [--match <regex>] [-- ...args]
+  projj run <命令或任务> [--all] [--filter <selector>] [-- ...args]
   projj shell-init <zsh|bash|fish>
 `;
 
@@ -823,7 +823,7 @@ git commit -m "feat: add clone command"
 
 - 配置任务优先于原始命令。
 - 未命中任务时按原始命令运行。
-- `--match` 用正则过滤 repo key。
+- `--filter` 用仓库选择器过滤 repo。
 
 核心断言：
 
@@ -832,7 +832,7 @@ expect(resolveCommand("status", ["--short"], { status: "git status" })).toBe(
   "git status --short",
 );
 expect(resolveCommand("git status", [], {})).toBe("git status");
-expect(filterReposByMatch(repos, "egg").map((repo) => repo.key)).toEqual([
+expect(filterReposBySelector(repos, "egg").map((repo) => repo.key)).toEqual([
   "github.com/eggjs/egg",
 ]);
 ```
@@ -856,7 +856,7 @@ export function resolveCommand(
   args: string[],
   tasks: Record<string, string>,
 ): string;
-export function filterReposByMatch(repos: Repo[], pattern?: string): Repo[];
+export function filterReposBySelector(repos: Repo[], selector?: string): Repo[];
 export async function runShellCommand(command: string, cwd: string): Promise<number>;
 ```
 
@@ -864,16 +864,17 @@ export async function runShellCommand(command: string, cwd: string): Promise<num
 
 - `resolveCommand` 先查 `tasks[commandOrTask]`，未命中则使用 `commandOrTask`。
 - `--` 后的参数用 `shellQuote` 追加。
-- `filterReposByMatch` 对 `repo.key` 做正则匹配。
+- `filterReposBySelector` 对 repo 名、`owner/repo` 和 `host/owner/repo` 做选择器匹配。
 - `runShellCommand` 使用 shell 执行，并继承 stdio。
 
 - [ ] **步骤 4：接入 `projj run`**
 
 修改 `src/cli.ts`：
 
-- 解析 `projj run <命令或任务> [--all] [--match <regex>] [-- ...args]`。
+- 解析 `projj run <命令或任务> [--all] [--filter <selector>] [-- ...args]`。
 - 不带 `--all` 时在当前目录运行。
 - 带 `--all` 时扫描全部 repo，在每个 repo 下运行。
+- 带 `--filter` 时扫描全部 repo，并只在匹配 repo 下运行；`--filter` 不要求同时传 `--all`。
 - 每个 repo 执行前输出 `==> <host>/<owner>/<repo>`。
 - 任一 repo 失败时，最终退出码使用最后一个非 0 退出码。
 

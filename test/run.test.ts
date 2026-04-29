@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Repo } from "../src/repos";
-import { envWithoutFinalizer, filterReposByMatch, resolveCommand, shellQuote } from "../src/run";
+import { envWithoutFinalizer, filterReposBySelector, resolveCommand, shellQuote } from "../src/run";
 
 describe("run", () => {
   test("configured task takes precedence over raw command", () => {
@@ -13,15 +13,22 @@ describe("run", () => {
     expect(resolveCommand("git status", [], {})).toBe("git status");
   });
 
-  test("--match filters repositories by repo key regex", () => {
+  test("--filter matches repository selectors", () => {
     const repos = [
       repo("github.com", "atian25", "projj"),
       repo("github.com", "eggjs", "egg"),
       repo("gitlab.com", "atian25", "notes"),
     ];
 
-    expect(filterReposByMatch(repos, "^github\\.com/atian25/").map((item) => item.key)).toEqual([
+    expect(filterReposBySelector(repos, "projj").map((item) => item.key)).toEqual([
       "github.com/atian25/projj",
+    ]);
+    expect(filterReposBySelector(repos, "atian25/*").map((item) => item.key)).toEqual([
+      "github.com/atian25/projj",
+      "gitlab.com/atian25/notes",
+    ]);
+    expect(filterReposBySelector(repos, "GITHUB.COM/EGGJS/*").map((item) => item.key)).toEqual([
+      "github.com/eggjs/egg",
     ]);
   });
 
