@@ -219,20 +219,32 @@ export function createCli(deps: CliDeps) {
               return exitCode;
             }
 
-            if (parsed.positionals.length === 0) {
+            const forcedRawCommand =
+              parsed.positionals.length === 0 && extraArgs.length > 0
+                ? extraArgs.join(" ")
+                : undefined;
+
+            if (parsed.positionals.length === 0 && !forcedRawCommand) {
               output.stderr("Usage: projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]\n");
               return 1;
             }
 
             const config = await loadConfig(configPath, home);
             const [first, ...remaining] = parsed.positionals;
-            const commandOrTask = first!;
-            const isGlobalTask = Object.prototype.hasOwnProperty.call(config.tasks, commandOrTask);
+            const commandOrTask = first;
+            const isGlobalTask =
+              commandOrTask !== undefined &&
+              Object.prototype.hasOwnProperty.call(config.tasks, commandOrTask);
             const commandInput =
-              isGlobalTask || remaining.length === 0
-                ? commandOrTask
-                : [commandOrTask, ...remaining].join(" ");
-            const appendedArgs = isGlobalTask ? [...remaining, ...extraArgs] : extraArgs;
+              forcedRawCommand ??
+              (isGlobalTask || remaining.length === 0
+                ? commandOrTask!
+                : [commandOrTask!, ...remaining].join(" "));
+            const appendedArgs = forcedRawCommand
+              ? []
+              : isGlobalTask
+                ? [...remaining, ...extraArgs]
+                : extraArgs;
 
             const filter =
               typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
