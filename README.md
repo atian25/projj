@@ -118,6 +118,13 @@ projj run test --dry-run
 projj run test --filter egg --dry-run
 ```
 
+Use `--changed` to run only in repositories where `git status --short` is non-empty:
+
+```sh
+projj run status --changed
+projj run test --filter egg --changed --dry-run
+```
+
 Tasks are resolved in the execution directory. Project-local definitions take precedence over global shortcuts:
 
 ```text

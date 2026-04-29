@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { isAbsolute, join, resolve } from "node:path";
+import { getRepoChangeStatus as defaultGetRepoChangeStatus } from "./changed";
 import { createColorTheme, shouldUseColor } from "./color";
 import { defaultConfigPath, loadConfig, saveDefaultConfig } from "./config";
 import {
@@ -31,6 +32,7 @@ export type CliDeps = {
   cloneRepo?: typeof defaultCloneRepo;
   pathExists?: typeof defaultPathExists;
   runShellCommand?: typeof defaultRunShellCommand;
+  getRepoChangeStatus?: typeof defaultGetRepoChangeStatus;
   color?: boolean;
 };
 
@@ -60,6 +62,7 @@ export function createCli(deps: CliDeps) {
   const cloneRepo = deps.cloneRepo ?? defaultCloneRepo;
   const pathExists = deps.pathExists ?? defaultPathExists;
   const runShellCommand = deps.runShellCommand ?? defaultRunShellCommand;
+  const getRepoChangeStatus = deps.getRepoChangeStatus ?? defaultGetRepoChangeStatus;
   const colors = createColorTheme(
     deps.color ?? shouldUseColor(env, process.stdout.isTTY),
   );
@@ -190,6 +193,7 @@ export function createCli(deps: CliDeps) {
               args: commandArgs,
               options: {
                 all: { type: "boolean", default: false },
+                changed: { type: "boolean", default: false },
                 "dry-run": { type: "boolean", default: false },
                 filter: { type: "string" },
                 list: { type: "boolean", default: false },
@@ -288,7 +292,7 @@ export function createCli(deps: CliDeps) {
             const filter =
               typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
 
-            if (!parsed.values.all && !filter) {
+            if (!parsed.values.all && !filter && !parsed.values.changed) {
               const runCommand = await resolveRunCommand(
                 commandInput,
                 appendedArgs,
@@ -303,7 +307,8 @@ export function createCli(deps: CliDeps) {
               return runShellCommand(runCommand, cwd);
             }
 
-            const repos = filterReposBySelector(
+            let exitCode = 0;
+            let repos = filterReposBySelector(
               await scanRepos(config.base),
               filter,
             );
@@ -312,7 +317,20 @@ export function createCli(deps: CliDeps) {
               return 1;
             }
 
-            let exitCode = 0;
+            if (parsed.values.changed) {
+              const changedRepos = [];
+              for (const repo of repos) {
+                const status = await getRepoChangeStatus(repo.path);
+                if (status.kind === "changed") {
+                  changedRepos.push(repo);
+                } else if (status.kind === "error") {
+                  output.stderr(`${repo.key}: git status failed with exit code ${status.exitCode}\n`);
+                  exitCode = 1;
+                }
+              }
+              repos = changedRepos;
+            }
+
             const failures: Array<{ key: string; code: number }> = [];
             const action = parsed.values["dry-run"] ? "Would run" : "Running";
             output.stdout(`${action} in ${repos.length} repositories: ${commandInput}\n`);
