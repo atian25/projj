@@ -1,0 +1,38 @@
+src/cli.ts
+  d6e7ad998996405c 20,184-189,195-200,209,211-216
+docs/superpowers/plans/2026-04-29-project-task-resolution-implementation.md
+  d6e7ad998996405c 1-237
+docs/superpowers/specs/2026-04-29-project-task-resolution-design.md
+  d6e7ad998996405c 1-329
+Agent.md
+  d6e7ad998996405c 4
+README.md
+  d6e7ad998996405c 65,72,75-97,99,101
+test/cli.test.ts
+  d6e7ad998996405c 195-224,250,257-294
+src/tasks.ts
+  d6e7ad998996405c 1-231
+test/tasks.test.ts
+  d6e7ad998996405c 1-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "265fb00ad56715d5135d760fea9d73ecfe05f768",
+  "prompts": {
+    "d6e7ad998996405c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dd758-143b-7e40-8f84-b969b64a7e9b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "TZ",
+      "messages": [],
+      "total_additions": 1049,
+      "total_deletions": 14,
+      "accepted_lines": 1049,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/e24f41f74170da0acbed08f7f5b300ccb1bbb0946e01a1c5de54378d51d43a6a"
+    }
+  }
+}
