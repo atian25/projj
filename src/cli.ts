@@ -17,7 +17,7 @@ import {
 import { selectRepo } from "./select";
 import { shellInit, writeCdFinalizer } from "./shell";
 import type { SupportedShell } from "./shell";
-import { resolveRunCommand } from "./tasks";
+import { formatTaskList, listRunTasks, resolveRunCommand } from "./tasks";
 
 export type CliDeps = {
   stdout: Output["stdout"];
@@ -37,6 +37,7 @@ Usage:
   projj init
   projj clone <repo> [--base <path>] [--no-cd]
   projj find [query] [--list]
+  projj run --list [--all] [--filter <selector>]
   projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]
   projj shell-init <zsh|bash|fish>
 `;
@@ -169,9 +170,40 @@ export function createCli(deps: CliDeps) {
               options: {
                 all: { type: "boolean", default: false },
                 filter: { type: "string" },
+                list: { type: "boolean", default: false },
               },
               allowPositionals: true,
             });
+
+            if (parsed.values.list) {
+              if (parsed.positionals.length > 0 || extraArgs.length > 0) {
+                output.stderr("Usage: projj run --list [--all] [--filter <selector>]\n");
+                return 1;
+              }
+
+              const config = await loadConfig(configPath, home);
+              const filter =
+                typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
+
+              if (!parsed.values.all && !filter) {
+                output.stdout(formatTaskList(`Tasks in ${cwd}`, await listRunTasks(cwd, config.tasks)));
+                return 0;
+              }
+
+              const repos = filterReposBySelector(await scanRepos(config.base), filter);
+              output.stdout(`Tasks in ${repos.length} repositories\n\n`);
+              let exitCode = 0;
+              for (const repo of repos) {
+                try {
+                  output.stdout(`==> ${repo.key}\n`);
+                  output.stdout(formatTaskList("", await listRunTasks(repo.path, config.tasks)).replace(/^\n+/, ""));
+                } catch (error) {
+                  output.stderr(`${repo.key}: ${formatError(error)}\n`);
+                  exitCode = 1;
+                }
+              }
+              return exitCode;
+            }
 
             if (parsed.positionals.length === 0) {
               output.stderr("Usage: projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]\n");

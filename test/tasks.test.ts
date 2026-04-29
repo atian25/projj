@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveRunCommand } from "../src/tasks";
+import { formatTaskList, listRunTasks, resolveRunCommand } from "../src/tasks";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "projj-tasks-"));
@@ -128,6 +128,76 @@ describe("tasks", () => {
     await writeFile(taskfileCwd + "/Taskfile.yml", "tasks:\n  [\n");
     await expect(resolveRunCommand("test", [], {}, taskfileCwd)).rejects.toThrow(
       "invalid Taskfile",
+    );
+  });
+
+  test("lists tasks grouped by source", async () => {
+    const cwd = await tempDir();
+    await writeFile(cwd + "/.projj.toml", '[tasks]\nlocal = "echo local"\n');
+    await writeFile(
+      cwd + "/package.json",
+      JSON.stringify({ scripts: { test: "vitest", lint: "eslint ." } }),
+    );
+    await writeFile(cwd + "/Makefile", "build:\n\t@echo build\n");
+
+    await expect(listRunTasks(cwd, { status: "git status --short" })).resolves.toEqual([
+      { source: ".projj.toml", tasks: [{ name: "local", command: "echo local" }] },
+      {
+        source: "package.json",
+        tasks: [
+          { name: "lint", command: "eslint ." },
+          { name: "test", command: "vitest" },
+        ],
+      },
+      { source: "detected", tasks: [{ name: "make:build", command: "make build" }] },
+      { source: "global", tasks: [{ name: "status", command: "git status --short" }] },
+    ]);
+  });
+
+  test("lists common detected tasks", async () => {
+    const justCwd = await tempDir();
+    await writeFile(justCwd + "/justfile", "test:\n  echo test\n");
+    await expect(listRunTasks(justCwd, {})).resolves.toEqual([
+      { source: "detected", tasks: [{ name: "just:test", command: "just test" }] },
+    ]);
+
+    const taskCwd = await tempDir();
+    await writeFile(taskCwd + "/Taskfile.yml", "tasks:\n  test:\n    cmds:\n      - echo test\n");
+    await expect(listRunTasks(taskCwd, {})).resolves.toEqual([
+      { source: "detected", tasks: [{ name: "task:test", command: "task test" }] },
+    ]);
+
+    const cargoCwd = await tempDir();
+    await writeFile(cargoCwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
+    const cargoGroups = await listRunTasks(cargoCwd, {});
+    expect(cargoGroups[0]?.tasks).toContainEqual({ name: "cargo:test", command: "cargo test" });
+
+    const goCwd = await tempDir();
+    await writeFile(goCwd + "/go.mod", "module example.com/demo\n");
+    const goGroups = await listRunTasks(goCwd, {});
+    expect(goGroups[0]?.tasks).toContainEqual({ name: "go:test", command: "go test ./..." });
+  });
+
+  test("formats task lists", () => {
+    expect(
+      formatTaskList("Tasks in /repo", [
+        {
+          source: "package.json",
+          tasks: [
+            { name: "lint", command: "eslint ." },
+            { name: "test-local", command: "egg-bin test" },
+          ],
+        },
+      ]),
+    ).toBe(
+      "Tasks in /repo\n\n" +
+        "package.json\n" +
+        "  lint        eslint .\n" +
+        "  test-local  egg-bin test\n",
+    );
+
+    expect(formatTaskList("Tasks in /repo", [])).toBe(
+      "Tasks in /repo\n\nNo tasks found.\n",
     );
   });
 });
