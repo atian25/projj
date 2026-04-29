@@ -57,6 +57,18 @@ Short names use the configured `platform`. `--base` overrides the root directory
 
 Scan configured `base` directories and find repositories. By default, it jumps to the selected repository. `--list` only prints matching paths, one per line, for scripts.
 
+### `projj run --list [--all] [--filter <selector>]`
+
+List runnable tasks without executing them:
+
+```sh
+projj run --list
+projj run --list --filter egg-view
+projj run --list --all
+```
+
+Tasks are grouped by source, such as `.projj.toml`, `package.json`, detected project files, and global tasks.
+
 ### `projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]`
 
 Run a configured task or a raw shell command. Without `--all` or `--filter`, the command runs in the current directory. With `--all`, it runs in every discovered repository. With `--filter`, it runs in matching repositories by name, `owner/repo`, or `host/owner/repo`. `*` wildcards are supported:

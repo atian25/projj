@@ -89,6 +89,86 @@ describe("cli", () => {
     expect(stderr.join("")).toContain("Usage: projj run <command-or-task>");
   });
 
+  test("run --list prints tasks in current cwd", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const stdout: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["run", "--list"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(
+      `Tasks in ${cwd}\n\n` +
+        "package.json\n" +
+        "  test  vitest\n" +
+        "global\n" +
+        "  status  git status --short\n",
+    );
+  });
+
+  test("run --list with --filter prints tasks for matching repositories", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "web");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    await writeFile(join(repoPath, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["run", "--list", "--filter", "atian25/*"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Tasks in 1 repositories\n\n" +
+        "==> github.com/atian25/web\n" +
+        "package.json\n" +
+        "  test  vitest\n" +
+        "global\n" +
+        "  fetch   git fetch --all --prune\n" +
+        "  pull    git pull --ff-only\n" +
+        "  status  git status --short\n",
+    );
+  });
+
+  test("run --list rejects command and extra args", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+    });
+
+    const withCommand = await cli.run(["run", "--list", "test"]);
+    const withExtraArgs = await cli.run(["run", "--list", "--", "--watch"]);
+
+    expect(withCommand).toBe(1);
+    expect(withExtraArgs).toBe(1);
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toContain("Usage: projj run --list");
+  });
+
   test("run without --all executes in cwd", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
