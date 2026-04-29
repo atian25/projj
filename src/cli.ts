@@ -292,7 +292,21 @@ export function createCli(deps: CliDeps) {
             const filter =
               typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
 
-            if (!parsed.values.all && !filter && !parsed.values.changed) {
+            if (!parsed.values.all && !filter) {
+              if (parsed.values.changed) {
+                const status = await getRepoChangeStatus(cwd);
+                if (status.kind === "clean") {
+                  output.stdout("No changes in current directory.\n");
+                  return 0;
+                }
+                if (status.kind === "error") {
+                  output.stderr(
+                    `current directory: git status failed with exit code ${status.exitCode}\n`,
+                  );
+                  return 1;
+                }
+              }
+
               const runCommand = await resolveRunCommand(
                 commandInput,
                 appendedArgs,

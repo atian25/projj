@@ -122,6 +122,7 @@ Use `--changed` to run only in repositories where `git status --short` is non-em
 
 ```sh
 projj run status --changed
+projj run status --all --changed
 projj run test --filter egg --changed --dry-run
 ```
 

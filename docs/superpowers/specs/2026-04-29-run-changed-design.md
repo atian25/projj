@@ -11,7 +11,7 @@
 1. 支持 `projj run <command-or-task> --changed`。
 2. `--changed` 可以与 `--filter`、`--all`、`--dry-run` 组合。
 3. changed 定义为：在仓库目录执行 `git status --short` 输出非空。
-4. 只对扫描到的 repo 生效，不改变当前目录单仓执行语义。
+4. 没有 `--all` / `--filter` 时只检查并作用于当前目录。
 5. changed 检测失败时，该仓库视为失败，最终返回 1。
 
 ## 非目标
@@ -36,13 +36,13 @@ projj run test --changed --dry-run
 
 ## 目标选择语义
 
-`--changed` 表示从 repo 集合中进一步过滤 dirty repo。
+`--changed` 表示只在 git 工作区有改动时执行。
 
-基础集合：
+基础目标：
 
+- 如果没有 `--all` / `--filter`：检查当前目录。
 - 如果传了 `--filter`：先按 filter 选仓库。
 - 如果传了 `--all`：使用所有仓库。
-- 如果只传 `--changed` 且没有 `--filter` / `--all`：使用所有仓库。
 
 也就是说：
 
@@ -50,13 +50,7 @@ projj run test --changed --dry-run
 projj run status --changed
 ```
 
-等价于：
-
-```bash
-projj run status --all --changed
-```
-
-这个选择是为了让 `--changed` 本身成为批量选择器，避免要求用户每次写 `--all --changed`。
+只检查当前目录是否 changed；如果当前目录 clean，则不执行命令并返回 0。要扫描所有仓库必须显式传 `--all`。
 
 ## Changed 检测
 
@@ -82,7 +76,15 @@ github.com/atian25/projj: git status failed with exit code 128
 
 ## 输出
 
-如果没有 changed repo：
+当前目录 clean 时：
+
+```text
+No changes in current directory.
+```
+
+返回 0。
+
+批量模式没有 changed repo 时：
 
 ```text
 Running in 0 repositories: test
@@ -134,7 +136,9 @@ No repositories matched: egg
 
 ## 测试策略
 
-- `run status --changed` 在没有 `--all` 时也扫描所有仓库。
+- `run status --changed` 在没有 `--all` / `--filter` 时只检查当前目录。
+- 当前目录 clean 时返回 0，且不执行命令。
+- 当前目录检测失败时返回 1。
 - `--filter` 与 `--changed` 取交集。
 - clean repo 不执行命令。
 - changed repo 执行命令。
@@ -144,5 +148,5 @@ No repositories matched: egg
 ## 自审
 
 - 范围聚焦：只定义 changed selector，不做更细粒度 git 状态。
-- 默认行为明确：`--changed` 单独出现时隐式批量扫描所有 repo。
+- 默认行为明确：`--changed` 单独出现时仍是当前目录模式。
 - 与 dry-run/hooks 关系明确：changed 是目标集合过滤器。

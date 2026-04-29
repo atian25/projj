@@ -652,23 +652,21 @@ describe("cli", () => {
     expect(stderr.join("")).toContain("github.com/atian25/bad: invalid package.json");
   });
 
-  test("run --changed scans all repositories without --all", async () => {
+  test("run --changed checks only current directory without --all or --filter", async () => {
     const home = await tempDir();
-    const base = join(home, "repos");
-    const changedPath = await createRepo(base, "github.com", "atian25", "changed");
-    await createRepo(base, "github.com", "atian25", "clean");
+    const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
-    const stdout: string[] = [];
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
-      stdout: (text) => stdout.push(text),
+      stdout: () => {},
       stderr: () => {},
       configPath,
       home,
+      cwd,
       getRepoChangeStatus: async (repoPath) =>
-        repoPath === changedPath ? { kind: "changed" } : { kind: "clean" },
+        repoPath === cwd ? { kind: "changed" } : { kind: "clean" },
       runShellCommand: async (command, runCwd) => {
         calls.push({ command, cwd: runCwd });
         return 0;
@@ -678,12 +676,58 @@ describe("cli", () => {
     const code = await cli.run(["run", "status", "--changed"]);
 
     expect(code).toBe(0);
-    expect(stdout.join("")).toBe(
-      "Running in 1 repositories: status\n" +
-        "==> github.com/atian25/changed\n" +
-        "$ git status --short\n",
-    );
-    expect(calls).toEqual([{ command: "git status --short", cwd: changedPath }]);
+    expect(calls).toEqual([{ command: "git status --short", cwd }]);
+  });
+
+  test("run --changed skips clean current directory", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    let calls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      getRepoChangeStatus: async () => ({ kind: "clean" }),
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "status", "--changed"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe("No changes in current directory.\n");
+  });
+
+  test("run --changed reports current directory change detection failure", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      cwd,
+      getRepoChangeStatus: async () => ({ kind: "error", exitCode: 128 }),
+      runShellCommand: async () => 0,
+    });
+
+    const code = await cli.run(["run", "status", "--changed"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe("current directory: git status failed with exit code 128\n");
   });
 
   test("run --filter --changed uses intersection", async () => {
@@ -713,15 +757,12 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "git status --short", cwd: changedPath }]);
   });
 
-  test("run --changed --dry-run previews only changed repositories", async () => {
+  test("run --changed --dry-run previews changed current directory", async () => {
     const home = await tempDir();
-    const base = join(home, "repos");
-    const changedPath = await createRepo(base, "github.com", "atian25", "changed");
-    await createRepo(base, "github.com", "atian25", "clean");
-    await writeFile(join(changedPath, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
     const stdout: string[] = [];
     let calls = 0;
     const cli = createCli({
@@ -729,26 +770,25 @@ describe("cli", () => {
       stderr: () => {},
       configPath,
       home,
-      getRepoChangeStatus: async (repoPath) =>
-        repoPath === changedPath ? { kind: "changed" } : { kind: "clean" },
+      cwd,
+      getRepoChangeStatus: async () => ({ kind: "changed" }),
       runShellCommand: async () => {
         calls += 1;
         return 0;
       },
     });
 
-    const code = await cli.run(["run", "test", "--changed", "--dry-run"]);
+    const code = await cli.run(["run", "--changed", "--dry-run", "--", "ls"]);
 
     expect(code).toBe(0);
     expect(calls).toBe(0);
     expect(stdout.join("")).toBe(
-      "Would run in 1 repositories: test\n" +
-        "==> github.com/atian25/changed\n" +
-        "$ npm run test\n",
+      "Would run in current directory: ls\n" +
+        "$ ls\n",
     );
   });
 
-  test("run --changed returns 1 when change detection fails and continues", async () => {
+  test("run --all --changed returns 1 when change detection fails and continues", async () => {
     const home = await tempDir();
     const base = join(home, "repos");
     const badPath = await createRepo(base, "github.com", "atian25", "bad");
@@ -771,7 +811,7 @@ describe("cli", () => {
       },
     });
 
-    const code = await cli.run(["run", "status", "--changed"]);
+    const code = await cli.run(["run", "status", "--all", "--changed"]);
 
     expect(code).toBe(1);
     expect(stderr.join("")).toContain("github.com/atian25/bad: git status failed with exit code 128");

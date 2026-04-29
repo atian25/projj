@@ -2,7 +2,7 @@
 
 > **给 agentic workers：** REQUIRED SUB-SKILL：使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，按任务逐步执行本计划。步骤使用 checkbox（`- [ ]`）语法追踪。
 
-**目标：** 为 `projj run` 增加 `--changed`，只在 git 工作区有改动的仓库中执行或 dry-run 预览命令。
+**目标：** 为 `projj run` 增加 `--changed`，当前目录模式下只在当前目录有改动时运行，批量模式下只在有改动的仓库中执行或 dry-run 预览命令。
 
 **架构：** 新增 `src/changed.ts` 封装 `git status --short` 检测，`src/cli.ts` 在 repo 扫描/filter 后应用 changed 过滤。`CliDeps` 增加可注入的 `getRepoChangeStatus`，测试不用真实调用 git。
 
@@ -127,14 +127,12 @@ async function runGitStatusShort(cwd: string): Promise<{ exitCode: number; stdou
 在 `test/cli.test.ts` 增加：
 
 ```ts
-test("run --changed scans all repositories without --all", async () => {
+test("run --changed checks only current directory without --all or --filter", async () => {
   const home = await tempDir();
-  const base = join(home, "repos");
-  const changedPath = await createRepo(base, "github.com", "atian25", "changed");
-  await createRepo(base, "github.com", "atian25", "clean");
+  const cwd = await tempDir();
   const configPath = join(home, ".projj", "config.toml");
   await mkdir(join(home, ".projj"), { recursive: true });
-  await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+  await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
   const stdout: string[] = [];
   const calls: Array<{ command: string; cwd: string }> = [];
   const cli = createCli({
@@ -143,7 +141,7 @@ test("run --changed scans all repositories without --all", async () => {
     configPath,
     home,
     getRepoChangeStatus: async (repoPath) =>
-      repoPath === changedPath ? { kind: "changed" } : { kind: "clean" },
+      repoPath === cwd ? { kind: "changed" } : { kind: "clean" },
     runShellCommand: async (command, runCwd) => {
       calls.push({ command, cwd: runCwd });
       return 0;
@@ -154,11 +152,9 @@ test("run --changed scans all repositories without --all", async () => {
 
   expect(code).toBe(0);
   expect(stdout.join("")).toBe(
-    "Running in 1 repositories: status\n" +
-      "==> github.com/atian25/changed\n" +
-      "$ git status --short\n",
+    "",
   );
-  expect(calls).toEqual([{ command: "git status --short", cwd: changedPath }]);
+  expect(calls).toEqual([{ command: "git status --short", cwd }]);
 });
 
 test("run --filter --changed uses intersection", async () => {
@@ -221,19 +217,29 @@ const getRepoChangeStatus = deps.getRepoChangeStatus ?? defaultGetRepoChangeStat
 changed: { type: "boolean", default: false },
 ```
 
-当前目录判断从：
+当前目录判断保持：
 
 ```ts
 if (!parsed.values.all && !filter) {
 ```
 
-改成：
+并在该分支内对 `--changed` 做门槛检查：
 
 ```ts
-if (!parsed.values.all && !filter && !parsed.values.changed) {
+if (parsed.values.changed) {
+  const status = await getRepoChangeStatus(cwd);
+  if (status.kind === "clean") {
+    output.stdout("No changes in current directory.\n");
+    return 0;
+  }
+  if (status.kind === "error") {
+    output.stderr(`current directory: git status failed with exit code ${status.exitCode}\n`);
+    return 1;
+  }
+}
 ```
 
-这样 `--changed` 单独出现会进入批量 repo 选择。
+这样 `--changed` 单独出现仍然只作用于当前目录。
 
 - [ ] **步骤 4：实现 changed 过滤**
 
@@ -397,6 +403,6 @@ git commit -m "feat: add run changed filter"
 
 ## 自审
 
-- Spec 覆盖：changed 默认批量、filter 交集、dry-run、检测失败、README 都有任务覆盖。
+- Spec 覆盖：changed 当前目录模式、filter 交集、dry-run、检测失败、README 都有任务覆盖。
 - 占位扫描：没有未完成占位。
 - 类型一致性：`getRepoChangeStatus`、`RepoChangeStatus`、`changed` option 命名一致。
