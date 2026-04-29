@@ -59,29 +59,29 @@ Short names use the configured `platform`. `--base` overrides the root directory
 
 ```toml
 [tasks]
-zoxide = "zoxide add ."
+list-files = "ls -a"
 
 [[hooks]]
 event = "post_clone"
 filter = "github.com/*/*"
 tasks = [
   "git config user.name TZ",
-  "git config user.email atian25@qq.com",
-  "zoxide",
+  "git config user.email me@example.com",
+  "list-files",
 ]
 
 [[hooks]]
 event = "post_clone"
-filter = "code.byted.org/*/*"
+filter = "gitlab.example.com/*/*"
 tasks = [
   "git config user.name TZ",
-  "git config user.email liuyong.tz@bytedance.com",
+  "git config user.email work@example.com",
 ]
 ```
 
 Hooks only run after a new clone succeeds. If the target repository already exists, hooks are skipped. Hook steps run in the cloned repository and use the same task resolution as `projj run`: each item in `tasks` can be a local project task, a global `[tasks]` name, or a raw shell command. Multi-line TOML arrays are supported and are usually clearer for hooks with several steps.
 
-Hook filters use repository selectors. A scanned repository key looks like `github.com/owner/repo`, so host-wide rules should use patterns such as `github.com/*/*` or `code.byted.org/*/*`.
+Hook filters use repository selectors. A scanned repository key looks like `github.com/owner/repo`, so host-wide rules should use patterns such as `github.com/*/*` or `gitlab.example.com/*/*`.
 
 Hook tasks receive these environment variables:
 
