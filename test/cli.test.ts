@@ -152,6 +152,29 @@ describe("cli", () => {
     );
   });
 
+  test("run --list with --filter returns 1 when no repositories match", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["run", "--list", "--filter", "nope"]);
+
+    expect(code).toBe(1);
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toBe("No repositories matched: nope\n");
+  });
+
   test("run --list rejects command and extra args", async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
@@ -277,6 +300,54 @@ describe("cli", () => {
         "$ ls -a\n",
     );
     expect(calls).toEqual([{ command: "ls -a", cwd: repoPath }]);
+  });
+
+  test("run with --filter returns 1 when no repositories match", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "test", "--filter", "nope"]);
+
+    expect(code).toBe(1);
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toBe("No repositories matched: nope\n");
+    expect(calls).toEqual([]);
+  });
+
+  test("run --all returns 0 when no repositories exist", async () => {
+    const home = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["run", "test", "--all"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe("Running in 0 repositories: test\n");
   });
 
   test("run keeps task match when appending args after --", async () => {
@@ -432,6 +503,45 @@ describe("cli", () => {
       { command: "go test ./...", cwd: apiPath },
       { command: "pnpm run test", cwd: webPath },
     ]);
+  });
+
+  test("run with multiple repositories summarizes failures and returns last non-zero code", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const aPath = await createRepo(base, "github.com", "atian25", "a");
+    const bPath = await createRepo(base, "github.com", "atian25", "b");
+    const cPath = await createRepo(base, "github.com", "atian25", "c");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        if (runCwd === aPath) return 2;
+        if (runCwd === cPath) return 7;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "--filter", "atian25/*", "--", "echo", "ok"]);
+
+    expect(code).toBe(7);
+    expect(calls).toEqual([
+      { command: "echo ok", cwd: aPath },
+      { command: "echo ok", cwd: bPath },
+      { command: "echo ok", cwd: cPath },
+    ]);
+    expect(stderr.join("")).toBe(
+      "Failed in 2 repositories:\n" +
+        "- github.com/atian25/a exited 2\n" +
+        "- github.com/atian25/c exited 7\n",
+    );
   });
 
   test("run --all with --filter behaves like --filter", async () => {

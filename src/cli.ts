@@ -198,6 +198,11 @@ export function createCli(deps: CliDeps) {
               }
 
               const repos = filterReposBySelector(await scanRepos(config.base), filter);
+              if (filter && repos.length === 0) {
+                output.stderr(`No repositories matched: ${filter}\n`);
+                return 1;
+              }
+
               output.stdout(`Tasks in ${repos.length} repositories\n\n`);
               let exitCode = 0;
               for (const repo of repos) {
@@ -263,7 +268,13 @@ export function createCli(deps: CliDeps) {
               await scanRepos(config.base),
               filter,
             );
+            if (filter && repos.length === 0) {
+              output.stderr(`No repositories matched: ${filter}\n`);
+              return 1;
+            }
+
             let exitCode = 0;
+            const failures: Array<{ key: string; code: number }> = [];
             output.stdout(`Running in ${repos.length} repositories: ${commandInput}\n`);
             for (const repo of repos) {
               const runCommand = await resolveRunCommand(
@@ -275,7 +286,18 @@ export function createCli(deps: CliDeps) {
               output.stdout(`==> ${repo.key}\n`);
               output.stdout(`$ ${runCommand}\n`);
               const code = await runShellCommand(runCommand, repo.path);
-              if (code !== 0) exitCode = code;
+              if (code !== 0) {
+                exitCode = code;
+                failures.push({ key: repo.key, code });
+              }
+            }
+
+            if (failures.length > 0) {
+              const noun = failures.length === 1 ? "repository" : "repositories";
+              output.stderr(`Failed in ${failures.length} ${noun}:\n`);
+              for (const failure of failures) {
+                output.stderr(`- ${failure.key} exited ${failure.code}\n`);
+              }
             }
 
             return exitCode;

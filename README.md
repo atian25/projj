@@ -124,6 +124,8 @@ $ go test ./...
 
 If the command itself prints nothing, there is no extra result output. For example, `git status --short` is silent when a repository is clean.
 
+If `--filter` matches no repositories, `projj` exits with code 1. Batch runs continue after individual repository failures and print a final failure summary to stderr.
+
 Default tasks:
 
 ```toml
