@@ -1314,4 +1314,300 @@ describe("cli", () => {
     expect(stderr.join("")).toContain("Auto-cd is not enabled");
     expect(stderr.join("")).toContain('echo \'eval "$(projj shell-init zsh)"\' >> ~/.zshrc && source ~/.zshrc');
   });
+
+  test("hooks run post_clone defaults to current repository", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "[tasks]",
+        'setup = "echo setup"',
+        "",
+        "[[hooks]]",
+        'event = "post_clone"',
+        'tasks = ["setup"]',
+        "",
+      ].join("\n"),
+    );
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string; env: Record<string, string> | undefined }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cwd: repoPath,
+      runShellCommand: async (command, cwd, options) => {
+        calls.push({ command, cwd, env: options?.env });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["hooks", "run", "post_clone"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("Running post_clone hooks in current directory\n");
+    expect(stdout.join("")).toContain("==> github.com/atian25/projj\n");
+    expect(calls).toEqual([
+      {
+        command: "echo setup",
+        cwd: repoPath,
+        env: {
+          PROJJ_EVENT: "post_clone",
+          PROJJ_REPO_PATH: repoPath,
+          PROJJ_REPO_HOST: "github.com",
+          PROJJ_REPO_OWNER: "atian25",
+          PROJJ_REPO_NAME: "projj",
+          PROJJ_REPO_URL: "git@github.com:atian25/projj.git",
+        },
+      },
+    ]);
+  });
+
+  test("hooks run post_clone reports when current directory is not managed", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["hooks", "run", "post_clone"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe(
+      "current directory is not a managed repository; pass --all or --filter <selector>\n",
+    );
+  });
+
+  test("hooks run requires event", async () => {
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+    });
+
+    const code = await cli.run(["hooks", "run"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toContain(
+      "Usage: projj hooks run <event> [--all] [--filter <selector>] [--dry-run]",
+    );
+  });
+
+  test("hooks run rejects unsupported events", async () => {
+    const home = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["hooks", "run", "pre_run", "--all"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe("unsupported hook event: pre_run\n");
+  });
+
+  test("hooks run post_clone runs matching hooks for filtered repositories", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "projj");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "[tasks]",
+        'setup = "echo setup"',
+        "",
+        "[[hooks]]",
+        'event = "post_clone"',
+        'filter = "github.com/atian25/*"',
+        'tasks = ["setup"]',
+        "",
+      ].join("\n"),
+    );
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string; env: Record<string, string> | undefined }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async (command, cwd, options) => {
+        calls.push({ command, cwd, env: options?.env });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["hooks", "run", "post_clone", "--filter", "atian25/*"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("Running post_clone hooks in 1 repository\n");
+    expect(stdout.join("")).toContain("==> github.com/atian25/projj\n");
+    expect(calls).toEqual([
+      {
+        command: "echo setup",
+        cwd: repoPath,
+        env: {
+          PROJJ_EVENT: "post_clone",
+          PROJJ_REPO_PATH: repoPath,
+          PROJJ_REPO_HOST: "github.com",
+          PROJJ_REPO_OWNER: "atian25",
+          PROJJ_REPO_NAME: "projj",
+          PROJJ_REPO_URL: "git@github.com:atian25/projj.git",
+        },
+      },
+    ]);
+  });
+
+  test("hooks run post_clone dry-run previews all repositories without executing", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "[tasks]",
+        'setup = "echo setup"',
+        "",
+        "[[hooks]]",
+        'event = "post_clone"',
+        'tasks = ["setup"]',
+        "",
+      ].join("\n"),
+    );
+    const stdout: string[] = [];
+    let calls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["hooks", "run", "post_clone", "--all", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would run post_clone hooks in 2 repositories\n" +
+        "==> github.com/atian25/projj\n" +
+        "hook post_clone: setup\n" +
+        "$ echo setup\n" +
+        "==> github.com/eggjs/egg\n" +
+        "hook post_clone: setup\n" +
+        "$ echo setup\n",
+    );
+  });
+
+  test("hooks run post_clone reports repositories with no matching hooks", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "[[hooks]]",
+        'event = "post_clone"',
+        'filter = "eggjs/*"',
+        'tasks = ["setup"]',
+        "",
+      ].join("\n"),
+    );
+    const stdout: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["hooks", "run", "post_clone", "--all"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Running post_clone hooks in 1 repository\n" +
+        "==> github.com/atian25/projj\n" +
+        "No matching hooks.\n",
+    );
+  });
+
+  test("hooks run post_clone summarizes hook failures and continues", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "[tasks]",
+        'setup = "echo setup"',
+        "",
+        "[[hooks]]",
+        'event = "post_clone"',
+        'tasks = ["setup"]',
+        "",
+      ].join("\n"),
+    );
+    const stderr: string[] = [];
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      runShellCommand: async (_command, cwd) => {
+        calls.push(cwd);
+        return cwd.includes("atian25") ? 7 : 0;
+      },
+    });
+
+    const code = await cli.run(["hooks", "run", "post_clone", "--all"]);
+
+    expect(code).toBe(7);
+    expect(calls).toHaveLength(2);
+    expect(stderr.join("")).toContain("hook post_clone failed: setup exited 7\n");
+    expect(stderr.join("")).toContain("Failed in 1 repository:\n");
+    expect(stderr.join("")).toContain("- github.com/atian25/projj post_clone setup exited 7\n");
+  });
 });

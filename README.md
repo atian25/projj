@@ -81,6 +81,25 @@ PROJJ_REPO_NAME
 PROJJ_REPO_URL
 ```
 
+### `projj hooks run <event> [--all] [--filter <selector>] [--dry-run]`
+
+Run configured hooks manually. The first supported event is `post_clone`. Without `--all` or `--filter`, hooks run in the current managed repository:
+
+```sh
+projj hooks run post_clone --dry-run
+projj hooks run post_clone
+```
+
+Use `--filter` or `--all` to target repositories from configured `base` directories:
+
+```sh
+projj hooks run post_clone --filter atian25/projj --dry-run
+projj hooks run post_clone --all --dry-run
+projj hooks run post_clone --all
+```
+
+Use this to apply clone setup hooks to repositories that already exist. `--dry-run` prints the matched repositories and resolved hook commands without executing them. If the current directory is not managed by `projj`, pass `--all` or `--filter`.
+
 ### `projj find [query] [--list]`
 
 Scan configured `base` directories and find repositories. By default, it jumps to the selected repository. `--list` only prints matching paths, one per line, for scripts.

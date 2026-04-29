@@ -44,7 +44,7 @@ describe("hooks", () => {
     const stdout: string[] = [];
     const calls: Array<{ command: string; cwd: string; env: Record<string, string> | undefined }> = [];
 
-    const code = await runHooks({
+    const result = await runHooks({
       event: "post_clone",
       hooks: [
         { event: "post_clone", tasks: ["setup", "echo done"] },
@@ -63,7 +63,7 @@ describe("hooks", () => {
       },
     });
 
-    expect(code).toBe(0);
+    expect(result).toEqual({ code: 0, matched: 2 });
     expect(stdout.join("")).toContain("hook post_clone: setup\n");
     expect(stdout.join("")).toContain("$ git config user.email me@example.com\n");
     expect(calls.map((call) => call.command)).toEqual([
@@ -80,7 +80,7 @@ describe("hooks", () => {
     const stderr: string[] = [];
     const calls: string[] = [];
 
-    const code = await runHooks({
+    const result = await runHooks({
       event: "post_clone",
       hooks: [
         { event: "post_clone", tasks: ["setup", "next"] },
@@ -96,8 +96,66 @@ describe("hooks", () => {
       },
     });
 
-    expect(code).toBe(7);
+    expect(result).toEqual({
+      code: 7,
+      matched: 2,
+      failure: { event: "post_clone", task: "setup", code: 7 },
+    });
     expect(calls).toEqual(["setup command"]);
     expect(stderr.join("")).toBe("hook post_clone failed: setup exited 7\n");
+  });
+
+  test("runHooks dry-run prints resolved hook tasks without executing", async () => {
+    const stdout: string[] = [];
+    let calls = 0;
+
+    const result = await runHooks({
+      event: "post_clone",
+      hooks: [{ event: "post_clone", tasks: ["setup"] }],
+      repo,
+      repoPath: "/repo",
+      globalTasks: { setup: "setup command" },
+      output: { stdout: (text) => stdout.push(text), stderr: () => {} },
+      dryRun: true,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    expect(result).toEqual({ code: 0, matched: 1 });
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe("hook post_clone: setup\n$ setup command\n");
+  });
+
+  test("runHooks reports no matching hooks", async () => {
+    const result = await runHooks({
+      event: "post_clone",
+      hooks: [{ event: "post_clone", filter: "eggjs/*", tasks: ["setup"] }],
+      repo,
+      repoPath: "/repo",
+      globalTasks: { setup: "setup command" },
+      output: { stdout: () => {}, stderr: () => {} },
+    });
+
+    expect(result).toEqual({ code: 0, matched: 0 });
+  });
+
+  test("runHooks returns failure details", async () => {
+    const result = await runHooks({
+      event: "post_clone",
+      hooks: [{ event: "post_clone", tasks: ["setup"] }],
+      repo,
+      repoPath: "/repo",
+      globalTasks: { setup: "setup command" },
+      output: { stdout: () => {}, stderr: () => {} },
+      runShellCommand: async () => 7,
+    });
+
+    expect(result).toEqual({
+      code: 7,
+      matched: 1,
+      failure: { event: "post_clone", task: "setup", code: 7 },
+    });
   });
 });

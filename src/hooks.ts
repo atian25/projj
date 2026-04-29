@@ -17,7 +17,14 @@ type RunHooksOptions = {
   repoPath: string;
   globalTasks: Record<string, string>;
   output: Output;
+  dryRun?: boolean;
   runShellCommand?: typeof defaultRunShellCommand;
+};
+
+export type HookRunResult = {
+  code: number;
+  matched: number;
+  failure?: { event: HookEvent; task: string; code: number };
 };
 
 export function selectHooks(
@@ -47,7 +54,7 @@ export function buildHookEnv(
   };
 }
 
-export async function runHooks(options: RunHooksOptions): Promise<number> {
+export async function runHooks(options: RunHooksOptions): Promise<HookRunResult> {
   const hooks = selectHooks(options.hooks, options.event, options.repo);
   const runShellCommand = options.runShellCommand ?? defaultRunShellCommand;
   const env = buildHookEnv(options.event, options.repo, options.repoPath);
@@ -57,15 +64,20 @@ export async function runHooks(options: RunHooksOptions): Promise<number> {
       options.output.stdout(`hook ${options.event}: ${task}\n`);
       const command = await resolveRunCommand(task, [], options.globalTasks, options.repoPath);
       options.output.stdout(`$ ${command}\n`);
+      if (options.dryRun) continue;
       const code = await runShellCommand(command, options.repoPath, { env });
       if (code !== 0) {
         options.output.stderr(`hook ${options.event} failed: ${task} exited ${code}\n`);
-        return code;
+        return {
+          code,
+          matched: hooks.length,
+          failure: { event: options.event, task, code },
+        };
       }
     }
   }
 
-  return 0;
+  return { code: 0, matched: hooks.length };
 }
 
 function repoToSelectorRepo(repo: RepoInfo): Repo {

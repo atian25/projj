@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { getRepoChangeStatus as defaultGetRepoChangeStatus } from "./changed";
 import { createColorTheme, shouldUseColor } from "./color";
 import { defaultConfigPath, loadConfig, saveDefaultConfig } from "./config";
@@ -9,10 +9,12 @@ import {
   targetPathForRepo,
 } from "./git";
 import { parseRepoInput } from "./git-url";
+import type { RepoInfo } from "./git-url";
 import { runHooks } from "./hooks";
 import type { Output } from "./output";
 import { formatError } from "./output";
 import { findRepos, scanRepos } from "./repos";
+import type { Repo } from "./repos";
 import {
   filterReposBySelector,
   runShellCommand as defaultRunShellCommand,
@@ -42,6 +44,7 @@ Usage:
   projj init
   projj clone <repo> [--base <path>] [--no-cd]
   projj find [query] [--list]
+  projj hooks run <event> [--all] [--filter <selector>] [--dry-run]
   projj run --list [--all] [--filter <selector>]
   projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]
   projj shell-init <zsh|bash|fish>
@@ -126,7 +129,7 @@ export function createCli(deps: CliDeps) {
             }
 
             if (cloned) {
-              const hookCode = await runHooks({
+              const hookResult = await runHooks({
                 event: "post_clone",
                 hooks: config.hooks,
                 repo,
@@ -135,7 +138,7 @@ export function createCli(deps: CliDeps) {
                 output,
                 runShellCommand,
               });
-              if (hookCode !== 0) return hookCode;
+              if (hookResult.code !== 0) return hookResult.code;
             }
 
             if (!parsed.values["no-cd"]) {
@@ -184,6 +187,89 @@ export function createCli(deps: CliDeps) {
 
             output.stdout(shellInit(shell));
             return 0;
+          }
+          case "hooks": {
+            const parsed = parseArgs({
+              args: rest,
+              options: {
+                all: { type: "boolean", default: false },
+                "dry-run": { type: "boolean", default: false },
+                filter: { type: "string" },
+              },
+              allowPositionals: true,
+            });
+            const [subcommand, event, ...unexpected] = parsed.positionals;
+            if (subcommand !== "run" || !event || unexpected.length > 0) {
+              output.stderr("Usage: projj hooks run <event> [--all] [--filter <selector>] [--dry-run]\n");
+              return 1;
+            }
+            if (event !== "post_clone") {
+              output.stderr(`unsupported hook event: ${event}\n`);
+              return 1;
+            }
+
+            const filter =
+              typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
+            const config = await loadConfig(configPath, home);
+            const repos =
+              parsed.values.all || filter
+                ? filterReposBySelector(await scanRepos(config.base), filter)
+                : currentRepoFromBaseDirs(config.base, cwd);
+            if (!parsed.values.all && !filter && repos.length === 0) {
+              output.stderr(
+                "current directory is not a managed repository; pass --all or --filter <selector>\n",
+              );
+              return 1;
+            }
+            if (filter && repos.length === 0) {
+              output.stderr(`${colors.warning(`No repositories matched: ${filter}`)}\n`);
+              return 1;
+            }
+
+            const action = parsed.values["dry-run"] ? "Would run" : "Running";
+            const noun = repos.length === 1 ? "repository" : "repositories";
+            output.stdout(
+              parsed.values.all || filter
+                ? `${action} post_clone hooks in ${repos.length} ${noun}\n`
+                : `${action} post_clone hooks in current directory\n`,
+            );
+
+            let exitCode = 0;
+            const failures: Array<{ key: string; task: string; code: number }> = [];
+            for (const repo of repos) {
+              output.stdout(`${colors.repoHeader(`==> ${repo.key}`)}\n`);
+              const result = await runHooks({
+                event: "post_clone",
+                hooks: config.hooks,
+                repo: repoInfoFromScannedRepo(repo),
+                repoPath: repo.path,
+                globalTasks: config.tasks,
+                output,
+                dryRun: parsed.values["dry-run"],
+                runShellCommand,
+              });
+              if (result.matched === 0) output.stdout("No matching hooks.\n");
+              if (result.failure) {
+                exitCode = result.failure.code;
+                failures.push({
+                  key: repo.key,
+                  task: result.failure.task,
+                  code: result.failure.code,
+                });
+              }
+            }
+
+            if (failures.length > 0) {
+              const failureNoun = failures.length === 1 ? "repository" : "repositories";
+              output.stderr(`${colors.failureTitle(`Failed in ${failures.length} ${failureNoun}:`)}\n`);
+              for (const failure of failures) {
+                output.stderr(
+                  `- ${failure.key} post_clone ${failure.task} exited ${formatExitCode(failure.code, colors.exitReason)}\n`,
+                );
+              }
+            }
+
+            return exitCode;
           }
           case "run": {
             const separatorIndex = rest.indexOf("--");
@@ -403,6 +489,42 @@ function expandCliPath(value: string, home: string, cwd: string): string {
   if (value.startsWith("~/")) return join(home, value.slice(2));
   if (isAbsolute(value)) return value;
   return resolve(cwd, value);
+}
+
+function repoInfoFromScannedRepo(repo: Repo): RepoInfo {
+  return {
+    host: repo.host,
+    owner: repo.owner,
+    repo: repo.name,
+    cloneUrl: `git@${repo.host}:${repo.owner}/${repo.name}.git`,
+    relPath: repo.key,
+  };
+}
+
+function currentRepoFromBaseDirs(baseDirs: string[], cwd: string): Repo[] {
+  const resolvedCwd = resolve(cwd);
+
+  for (const baseDir of baseDirs) {
+    const base = resolve(baseDir);
+    const rel = relative(base, resolvedCwd);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) continue;
+
+    const parts = rel.split(/[\\/]+/);
+    if (parts.length !== 3 || parts.some((part) => part.length === 0)) continue;
+    const [host, owner, name] = parts as [string, string, string];
+    return [
+      {
+        base,
+        host,
+        owner,
+        name,
+        path: resolvedCwd,
+        key: `${host}/${owner}/${name}`,
+      },
+    ];
+  }
+
+  return [];
 }
 
 function formatExitCode(
