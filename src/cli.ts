@@ -186,7 +186,14 @@ export function createCli(deps: CliDeps) {
                 typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
 
               if (!parsed.values.all && !filter) {
-                output.stdout(formatTaskList(`Tasks in ${cwd}`, await listRunTasks(cwd, config.tasks)));
+                output.stdout(
+                  formatTaskList(
+                    `Tasks in ${cwd}`,
+                    await listRunTasks(cwd, config.tasks, {
+                      globalSource: `global (${configPath})`,
+                    }),
+                  ),
+                );
                 return 0;
               }
 
@@ -196,7 +203,14 @@ export function createCli(deps: CliDeps) {
               for (const repo of repos) {
                 try {
                   output.stdout(`==> ${repo.key}\n`);
-                  output.stdout(formatTaskList("", await listRunTasks(repo.path, config.tasks)).replace(/^\n+/, ""));
+                  output.stdout(
+                    formatTaskList(
+                      "",
+                      await listRunTasks(repo.path, config.tasks, {
+                        globalSource: `global (${configPath})`,
+                      }),
+                    ).replace(/^\n+/, ""),
+                  );
                 } catch (error) {
                   output.stderr(`${repo.key}: ${formatError(error)}\n`);
                   exitCode = 1;

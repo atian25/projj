@@ -115,7 +115,7 @@ describe("cli", () => {
       `Tasks in ${cwd}\n\n` +
         "package.json\n" +
         "  test  vitest\n" +
-        "global\n" +
+        `global (${configPath})\n` +
         "  status  git status --short\n",
     );
   });
@@ -145,7 +145,7 @@ describe("cli", () => {
         "==> github.com/atian25/web\n" +
         "package.json\n" +
         "  test  vitest\n" +
-        "global\n" +
+        `global (${configPath})\n` +
         "  fetch   git fetch --all --prune\n" +
         "  pull    git pull --ff-only\n" +
         "  status  git status --short\n",

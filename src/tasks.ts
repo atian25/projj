@@ -50,12 +50,13 @@ export async function resolveRunCommand(
 export async function listRunTasks(
   cwd: string,
   globalTasks: TaskMap,
+  options: { globalSource?: string } = {},
 ): Promise<TaskListGroup[]> {
   return [
     ...(await listProjjTasks(cwd)),
     ...(await listPackageScripts(cwd)),
     ...(await listDetectedTasks(cwd)),
-    ...taskMapToGroups("global", globalTasks),
+    ...taskMapToGroups(options.globalSource ?? "global", globalTasks),
   ];
 }
 

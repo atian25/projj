@@ -75,7 +75,7 @@ package.json
   test        npm run lint -- --fix && npm run test-local
   test-local  egg-bin test
 
-global
+global (/Users/tz/.projj/config.toml)
   status      git status --short
   pull        git pull --ff-only
   fetch       git fetch --all --prune
@@ -93,7 +93,7 @@ Tasks in 2 repositories
 package.json
   lint        eslint . --fix
   test        npm run lint -- --fix && npm run test-local
-global
+global (/Users/tz/.projj/config.toml)
   status      git status --short
   pull        git pull --ff-only
   fetch       git fetch --all --prune
@@ -102,7 +102,7 @@ global
 package.json
   test        bun test
   typecheck   bunx tsc --noEmit
-global
+global (/Users/tz/.projj/config.toml)
   status      git status --short
   pull        git pull --ff-only
   fetch       git fetch --all --prune
@@ -147,7 +147,7 @@ global ~/.projj/config.toml [tasks]
 package.json
   test        vitest
 
-global
+global (/Users/tz/.projj/config.toml)
   test        npm test
 ```
 
