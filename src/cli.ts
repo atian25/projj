@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { isAbsolute, join, resolve } from "node:path";
+import { createColorTheme, shouldUseColor } from "./color";
 import { defaultConfigPath, loadConfig, saveDefaultConfig } from "./config";
 import {
   cloneRepo as defaultCloneRepo,
@@ -29,6 +30,7 @@ export type CliDeps = {
   cloneRepo?: typeof defaultCloneRepo;
   pathExists?: typeof defaultPathExists;
   runShellCommand?: typeof defaultRunShellCommand;
+  color?: boolean;
 };
 
 const HELP = `projj
@@ -57,6 +59,9 @@ export function createCli(deps: CliDeps) {
   const cloneRepo = deps.cloneRepo ?? defaultCloneRepo;
   const pathExists = deps.pathExists ?? defaultPathExists;
   const runShellCommand = deps.runShellCommand ?? defaultRunShellCommand;
+  const colors = createColorTheme(
+    deps.color ?? shouldUseColor(env, process.stdout.isTTY),
+  );
 
   return {
     async run(argv: string[]): Promise<number> {
@@ -192,6 +197,10 @@ export function createCli(deps: CliDeps) {
                     await listRunTasks(cwd, config.tasks, {
                       globalSource: `global (${configPath})`,
                     }),
+                    {
+                      heading: colors.heading,
+                      source: colors.taskSource,
+                    },
                   ),
                 );
                 return 0;
@@ -199,21 +208,25 @@ export function createCli(deps: CliDeps) {
 
               const repos = filterReposBySelector(await scanRepos(config.base), filter);
               if (filter && repos.length === 0) {
-                output.stderr(`No repositories matched: ${filter}\n`);
+                output.stderr(`${colors.warning(`No repositories matched: ${filter}`)}\n`);
                 return 1;
               }
 
-              output.stdout(`Tasks in ${repos.length} repositories\n\n`);
+              output.stdout(`${colors.heading(`Tasks in ${repos.length} repositories`)}\n\n`);
               let exitCode = 0;
               for (const repo of repos) {
                 try {
-                  output.stdout(`==> ${repo.key}\n`);
+                  output.stdout(`${colors.repoHeader(`==> ${repo.key}`)}\n`);
                   output.stdout(
                     formatTaskList(
                       "",
                       await listRunTasks(repo.path, config.tasks, {
                         globalSource: `global (${configPath})`,
                       }),
+                      {
+                        heading: colors.heading,
+                        source: colors.taskSource,
+                      },
                     ).replace(/^\n+/, ""),
                   );
                 } catch (error) {
@@ -269,7 +282,7 @@ export function createCli(deps: CliDeps) {
               filter,
             );
             if (filter && repos.length === 0) {
-              output.stderr(`No repositories matched: ${filter}\n`);
+              output.stderr(`${colors.warning(`No repositories matched: ${filter}`)}\n`);
               return 1;
             }
 
@@ -283,8 +296,8 @@ export function createCli(deps: CliDeps) {
                 config.tasks,
                 repo.path,
               );
-              output.stdout(`==> ${repo.key}\n`);
-              output.stdout(`$ ${runCommand}\n`);
+              output.stdout(`${colors.repoHeader(`==> ${repo.key}`)}\n`);
+              output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
               const code = await runShellCommand(runCommand, repo.path);
               if (code !== 0) {
                 exitCode = code;
@@ -294,9 +307,11 @@ export function createCli(deps: CliDeps) {
 
             if (failures.length > 0) {
               const noun = failures.length === 1 ? "repository" : "repositories";
-              output.stderr(`Failed in ${failures.length} ${noun}:\n`);
+              output.stderr(`${colors.failureTitle(`Failed in ${failures.length} ${noun}:`)}\n`);
               for (const failure of failures) {
-                output.stderr(`- ${failure.key} exited ${formatExitCode(failure.code)}\n`);
+                output.stderr(
+                  `- ${failure.key} exited ${formatExitCode(failure.code, colors.exitReason)}\n`,
+                );
               }
             }
 
@@ -325,9 +340,12 @@ function expandCliPath(value: string, home: string, cwd: string): string {
   return resolve(cwd, value);
 }
 
-function formatExitCode(code: number): string {
+function formatExitCode(
+  code: number,
+  formatReason: (text: string) => string = (text) => text,
+): string {
   const explanation = exitCodeExplanation(code);
-  return explanation ? `${code} (${explanation})` : String(code);
+  return explanation ? `${code} ${formatReason(`(${explanation})`)}` : String(code);
 }
 
 function exitCodeExplanation(code: number): string | undefined {

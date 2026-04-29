@@ -9,6 +9,11 @@ export type TaskListGroup = {
   tasks: Array<{ name: string; command: string }>;
 };
 
+type TaskListFormatOptions = {
+  heading?: (text: string) => string;
+  source?: (text: string) => string;
+};
+
 type ResolvedCommand = {
   command: string;
   appendSeparator?: boolean;
@@ -60,15 +65,19 @@ export async function listRunTasks(
   ];
 }
 
-export function formatTaskList(title: string, groups: TaskListGroup[]): string {
-  const lines = [title, ""];
+export function formatTaskList(
+  title: string,
+  groups: TaskListGroup[],
+  options: TaskListFormatOptions = {},
+): string {
+  const lines = [title ? (options.heading?.(title) ?? title) : title, ""];
   if (groups.length === 0) {
     lines.push("No tasks found.");
     return `${lines.join("\n")}\n`;
   }
 
   for (const group of groups) {
-    lines.push(group.source);
+    lines.push(options.source?.(group.source) ?? group.source);
     const width = Math.max(...group.tasks.map((task) => task.name.length));
     for (const task of group.tasks) {
       lines.push(`  ${task.name.padEnd(width)}  ${task.command}`);

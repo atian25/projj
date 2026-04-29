@@ -569,6 +569,62 @@ describe("cli", () => {
     );
   });
 
+  test("run batch output colorizes structured stdout when enabled", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      color: true,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "--filter", "atian25/*", "--", "ls", "-a"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([{ command: "ls -a", cwd: repoPath }]);
+    expect(stdout.join("")).toContain("\x1b[");
+    expect(stdout.join("")).toContain("==> github.com/atian25/projj");
+    expect(stdout.join("")).toContain("$ ls -a");
+  });
+
+  test("run failure summary colorizes title and exit explanation when enabled", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      color: true,
+      runShellCommand: async () => 127,
+    });
+
+    const code = await cli.run(["run", "--filter", "atian25/*", "--", "ll"]);
+
+    expect(code).toBe(127);
+    expect(stderr.join("")).toContain("\x1b[");
+    expect(stderr.join("")).toContain("Failed in 1 repository:");
+    expect(stderr.join("")).toContain("127");
+    expect(stderr.join("")).toContain("(command not found)");
+  });
+
   test("run --all with --filter behaves like --filter", async () => {
     const home = await tempDir();
     const base = join(home, "repos");
