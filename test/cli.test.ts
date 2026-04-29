@@ -217,6 +217,70 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "git status", cwd }]);
   });
 
+  test("run --dry-run prints resolved current-directory command without executing", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\ntest = "global test"\n`,
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const stdout: string[] = [];
+    let calls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "test", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would run in current directory: test\n" +
+        "$ npm run test\n",
+    );
+  });
+
+  test("run --dry-run supports forced raw command", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    let calls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "--dry-run", "--", "ls", "-a"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would run in current directory: ls -a\n" +
+        "$ ls -a\n",
+    );
+  });
+
   test("run accepts raw command split across positionals", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
@@ -503,6 +567,89 @@ describe("cli", () => {
       { command: "go test ./...", cwd: apiPath },
       { command: "pnpm run test", cwd: webPath },
     ]);
+  });
+
+  test("run --filter --dry-run prints resolved repository commands without executing", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const apiPath = await createRepo(base, "github.com", "atian25", "api");
+    const webPath = await createRepo(base, "github.com", "atian25", "web");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    await writeFile(join(apiPath, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    await writeFile(join(webPath, "go.mod"), "module example.com/web\n");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    let calls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "test", "--filter", "atian25/*", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would run in 2 repositories: test\n" +
+        "==> github.com/atian25/api\n" +
+        "$ npm run test\n" +
+        "==> github.com/atian25/web\n" +
+        "$ go test ./...\n",
+    );
+  });
+
+  test("run --all --dry-run returns 0 with zero repositories", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["run", "test", "--all", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe("Would run in 0 repositories: test\n");
+  });
+
+  test("run --filter --dry-run continues after repository task resolution errors", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const badPath = await createRepo(base, "github.com", "atian25", "bad");
+    const goodPath = await createRepo(base, "github.com", "atian25", "good");
+    await writeFile(join(badPath, "package.json"), "{");
+    await writeFile(join(goodPath, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+    });
+
+    const code = await cli.run(["run", "test", "--filter", "atian25/*", "--dry-run"]);
+
+    expect(code).toBe(1);
+    expect(stdout.join("")).toContain("==> github.com/atian25/good\n$ npm run test\n");
+    expect(stderr.join("")).toContain("github.com/atian25/bad: invalid package.json");
   });
 
   test("run with multiple repositories summarizes failures and returns last non-zero code", async () => {

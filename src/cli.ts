@@ -190,6 +190,7 @@ export function createCli(deps: CliDeps) {
               args: commandArgs,
               options: {
                 all: { type: "boolean", default: false },
+                "dry-run": { type: "boolean", default: false },
                 filter: { type: "string" },
                 list: { type: "boolean", default: false },
               },
@@ -197,7 +198,11 @@ export function createCli(deps: CliDeps) {
             });
 
             if (parsed.values.list) {
-              if (parsed.positionals.length > 0 || extraArgs.length > 0) {
+              if (
+                parsed.positionals.length > 0 ||
+                extraArgs.length > 0 ||
+                parsed.values["dry-run"]
+              ) {
                 output.stderr("Usage: projj run --list [--all] [--filter <selector>]\n");
                 return 1;
               }
@@ -290,6 +295,11 @@ export function createCli(deps: CliDeps) {
                 config.tasks,
                 cwd,
               );
+              if (parsed.values["dry-run"]) {
+                output.stdout(`Would run in current directory: ${commandInput}\n`);
+                output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
+                return 0;
+              }
               return runShellCommand(runCommand, cwd);
             }
 
@@ -304,20 +314,27 @@ export function createCli(deps: CliDeps) {
 
             let exitCode = 0;
             const failures: Array<{ key: string; code: number }> = [];
-            output.stdout(`Running in ${repos.length} repositories: ${commandInput}\n`);
+            const action = parsed.values["dry-run"] ? "Would run" : "Running";
+            output.stdout(`${action} in ${repos.length} repositories: ${commandInput}\n`);
             for (const repo of repos) {
-              const runCommand = await resolveRunCommand(
-                commandInput,
-                appendedArgs,
-                config.tasks,
-                repo.path,
-              );
-              output.stdout(`${colors.repoHeader(`==> ${repo.key}`)}\n`);
-              output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
-              const code = await runShellCommand(runCommand, repo.path);
-              if (code !== 0) {
-                exitCode = code;
-                failures.push({ key: repo.key, code });
+              try {
+                const runCommand = await resolveRunCommand(
+                  commandInput,
+                  appendedArgs,
+                  config.tasks,
+                  repo.path,
+                );
+                output.stdout(`${colors.repoHeader(`==> ${repo.key}`)}\n`);
+                output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
+                if (parsed.values["dry-run"]) continue;
+                const code = await runShellCommand(runCommand, repo.path);
+                if (code !== 0) {
+                  exitCode = code;
+                  failures.push({ key: repo.key, code });
+                }
+              } catch (error) {
+                output.stderr(`${repo.key}: ${formatError(error)}\n`);
+                exitCode = 1;
               }
             }
 

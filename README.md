@@ -111,6 +111,13 @@ projj run --filter egg-view -- ls -a
 projj run status -- --short
 ```
 
+Use `--dry-run` to preview resolved commands without executing them:
+
+```sh
+projj run test --dry-run
+projj run test --filter egg --dry-run
+```
+
 Tasks are resolved in the execution directory. Project-local definitions take precedence over global shortcuts:
 
 ```text
