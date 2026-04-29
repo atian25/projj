@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   defaultConfig,
   expandConfigPath,
@@ -17,7 +17,12 @@ describe("config", () => {
         pull: "git pull --ff-only",
         fetch: "git fetch --all --prune",
       },
+      hooks: [],
     });
+  });
+
+  test("default config includes empty hooks", () => {
+    expect(defaultConfig().hooks).toEqual([]);
   });
 
   test("expands tilde and relative paths", () => {
@@ -77,5 +82,70 @@ describe("config", () => {
     await expect(loadConfig(configPath, root)).rejects.toThrow(
       "invalid config: tasks.status must be a string",
     );
+  });
+
+  test("loads post_clone hooks", async () => {
+    const dir = await Bun.$`mktemp -d`.text();
+    const root = dir.trim();
+    const configPath = join(root, ".projj", "config.toml");
+    await Bun.$`mkdir -p ${dirname(configPath)}`;
+    await Bun.write(
+      configPath,
+      [
+        'base = ["~/projj"]',
+        'platform = "github.com"',
+        "",
+        "[[hooks]]",
+        'event = "post_clone"',
+        'filter = "github.com/atian25/*"',
+        'tasks = ["setup-git-user", "zoxide"]',
+        "",
+      ].join("\n"),
+    );
+
+    const config = await loadConfig(configPath, root);
+
+    expect(config.hooks).toEqual([
+      {
+        event: "post_clone",
+        filter: "github.com/atian25/*",
+        tasks: ["setup-git-user", "zoxide"],
+      },
+    ]);
+  });
+
+  test("load config rejects invalid hooks", async () => {
+    const cases: Array<{ name: string; toml: string; message: string }> = [
+      {
+        name: "non-array hooks",
+        toml: 'hooks = "post_clone"',
+        message: "invalid config: hooks must be an array",
+      },
+      {
+        name: "unsupported event",
+        toml: '[[hooks]]\nevent = "pre_clone"\ntasks = ["setup"]\n',
+        message: "invalid config: hooks[0].event must be post_clone",
+      },
+      {
+        name: "empty tasks",
+        toml: '[[hooks]]\nevent = "post_clone"\ntasks = []\n',
+        message: "invalid config: hooks[0].tasks must be a non-empty string[]",
+      },
+      {
+        name: "non-string filter",
+        toml: '[[hooks]]\nevent = "post_clone"\nfilter = 1\ntasks = ["setup"]\n',
+        message: "invalid config: hooks[0].filter must be a string",
+      },
+    ];
+
+    for (const item of cases) {
+      const dir = await Bun.$`mktemp -d`.text();
+      const root = dir.trim();
+      const configPath = join(root, ".projj", "config.toml");
+      await Bun.$`mkdir -p ${dirname(configPath)}`;
+      await Bun.write(configPath, item.toml);
+
+      await expect(loadConfig(configPath, root), item.name).rejects.toThrow(item.message);
+    }
   });
 });

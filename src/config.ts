@@ -6,6 +6,13 @@ export type ProjjConfig = {
   base: string[];
   platform: string;
   tasks: Record<string, string>;
+  hooks: HookConfig[];
+};
+
+export type HookConfig = {
+  event: "post_clone";
+  filter?: string;
+  tasks: string[];
 };
 
 export function defaultConfig(): ProjjConfig {
@@ -17,6 +24,7 @@ export function defaultConfig(): ProjjConfig {
       pull: "git pull --ff-only",
       fetch: "git fetch --all --prune",
     },
+    hooks: [],
   };
 }
 
@@ -78,7 +86,40 @@ function normalizeParsedConfig(value: unknown): ProjjConfig {
     tasks = record.tasks as Record<string, string>;
   }
 
-  return { base, platform, tasks };
+  let hooks = defaults.hooks;
+  if (hasField(record, "hooks")) {
+    if (!Array.isArray(record.hooks)) {
+      throw new Error("invalid config: hooks must be an array");
+    }
+    hooks = record.hooks.map((hook, index) => normalizeHookConfig(hook, index));
+  }
+
+  return { base, platform, tasks, hooks };
+}
+
+function normalizeHookConfig(value: unknown, index: number): HookConfig {
+  if (!isRecord(value)) {
+    throw new Error(`invalid config: hooks[${index}] must be an object`);
+  }
+  if (value.event !== "post_clone") {
+    throw new Error(`invalid config: hooks[${index}].event must be post_clone`);
+  }
+  if (
+    !Array.isArray(value.tasks) ||
+    value.tasks.length === 0 ||
+    !value.tasks.every((task) => typeof task === "string")
+  ) {
+    throw new Error(`invalid config: hooks[${index}].tasks must be a non-empty string[]`);
+  }
+  if (hasField(value, "filter") && typeof value.filter !== "string") {
+    throw new Error(`invalid config: hooks[${index}].filter must be a string`);
+  }
+
+  return {
+    event: "post_clone",
+    tasks: [...value.tasks],
+    ...(typeof value.filter === "string" ? { filter: value.filter } : {}),
+  };
 }
 
 export async function loadConfig(

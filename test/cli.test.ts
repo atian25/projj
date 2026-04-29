@@ -864,6 +864,118 @@ describe("cli", () => {
     expect(stderr.join("")).toBe("");
   });
 
+  test("clone runs matching post_clone hooks after new clone", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "[tasks]",
+        'setup = "git config user.email me@example.com"',
+        "",
+        "[[hooks]]",
+        'event = "post_clone"',
+        'filter = "github.com/atian25/*"',
+        'tasks = ["setup"]',
+        "",
+      ].join("\n"),
+    );
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string; env: Record<string, string> | undefined }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cloneRepo: async () => {},
+      runShellCommand: async (command, cwd, options) => {
+        calls.push({ command, cwd, env: options?.env });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["clone", "atian25/projj", "--no-cd"]);
+
+    const targetPath = join(base, "github.com", "atian25", "projj");
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain(`cloned ${targetPath}\n`);
+    expect(stdout.join("")).toContain("hook post_clone: setup\n");
+    expect(calls).toEqual([
+      {
+        command: "git config user.email me@example.com",
+        cwd: targetPath,
+        env: {
+          PROJJ_EVENT: "post_clone",
+          PROJJ_REPO_PATH: targetPath,
+          PROJJ_REPO_HOST: "github.com",
+          PROJJ_REPO_OWNER: "atian25",
+          PROJJ_REPO_NAME: "projj",
+          PROJJ_REPO_URL: "git@github.com:atian25/projj.git",
+        },
+      },
+    ]);
+  });
+
+  test("clone does not run post_clone hooks when target already exists", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[[hooks]]\nevent = "post_clone"\ntasks = ["setup"]\n`,
+    );
+    let hookCalls = 0;
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async () => {
+        hookCalls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["clone", "atian25/projj", "--no-cd"]);
+
+    expect(code).toBe(0);
+    expect(hookCalls).toBe(0);
+  });
+
+  test("clone returns hook failure and skips finalizer", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const finalizer = join(home, "finalizer");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[[hooks]]\nevent = "post_clone"\ntasks = ["setup"]\n`,
+    );
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      env: { HOME: home, PROJJ_FINALIZER_FILE: finalizer },
+      cloneRepo: async () => {},
+      runShellCommand: async () => 7,
+    });
+
+    const code = await cli.run(["clone", "atian25/projj"]);
+
+    expect(code).toBe(7);
+    expect(stderr.join("")).toContain("hook post_clone failed: setup exited 7");
+    await expect(readFile(finalizer, "utf8")).rejects.toThrow();
+  });
+
   test("clone without shell integration explains how to enable auto-cd", async () => {
     const home = await tempDir();
     const base = join(home, "repos");

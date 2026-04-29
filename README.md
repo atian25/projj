@@ -53,6 +53,34 @@ projj clone git@github.com:atian25/projj.git
 
 Short names use the configured `platform`. `--base` overrides the root directory for this clone; relative paths are resolved from the current directory. By default, clone attempts to change the current shell to the repository directory after cloning. Use `--no-cd` to clone without jumping.
 
+### Post-clone hooks
+
+`projj clone` can run tasks after a repository is cloned for the first time:
+
+```toml
+[tasks]
+setup-git-user = "git config user.email me@example.com"
+zoxide = "zoxide add ."
+
+[[hooks]]
+event = "post_clone"
+filter = "github.com/atian25/*"
+tasks = ["setup-git-user", "zoxide"]
+```
+
+Hooks only run after a new clone succeeds. If the target repository already exists, hooks are skipped. Hook tasks run in the cloned repository and use the same task resolution as `projj run`.
+
+Hook tasks receive these environment variables:
+
+```text
+PROJJ_EVENT
+PROJJ_REPO_PATH
+PROJJ_REPO_HOST
+PROJJ_REPO_OWNER
+PROJJ_REPO_NAME
+PROJJ_REPO_URL
+```
+
 ### `projj find [query] [--list]`
 
 Scan configured `base` directories and find repositories. By default, it jumps to the selected repository. `--list` only prints matching paths, one per line, for scripts.

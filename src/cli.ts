@@ -8,6 +8,7 @@ import {
   targetPathForRepo,
 } from "./git";
 import { parseRepoInput } from "./git-url";
+import { runHooks } from "./hooks";
 import type { Output } from "./output";
 import { formatError } from "./output";
 import { findRepos, scanRepos } from "./repos";
@@ -112,11 +113,26 @@ export function createCli(deps: CliDeps) {
             const repo = parseRepoInput(repoInput, config.platform);
             const targetPath = targetPathForRepo(base, repo);
 
+            let cloned = false;
             if (await pathExists(targetPath)) {
               output.stdout(`exists ${targetPath}\n`);
             } else {
               await cloneRepo(repo.cloneUrl, targetPath);
+              cloned = true;
               output.stdout(`cloned ${targetPath}\n`);
+            }
+
+            if (cloned) {
+              const hookCode = await runHooks({
+                event: "post_clone",
+                hooks: config.hooks,
+                repo,
+                repoPath: targetPath,
+                globalTasks: config.tasks,
+                output,
+                runShellCommand,
+              });
+              if (hookCode !== 0) return hookCode;
             }
 
             if (!parsed.values["no-cd"]) {

@@ -52,16 +52,42 @@ export function envWithoutFinalizer(
   return safeEnv;
 }
 
-export async function runShellCommand(command: string, cwd: string): Promise<number> {
+type ShellSpawn = (
+  command: string,
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    shell: true;
+    stdio: "inherit";
+  },
+) => {
+  on(
+    event: "error" | "close",
+    listener: (() => void) | ((code: number | null) => void),
+  ): unknown;
+};
+
+type RunShellCommandOptions = {
+  env?: Record<string, string>;
+  baseEnv?: NodeJS.ProcessEnv;
+  spawn?: ShellSpawn;
+};
+
+export async function runShellCommand(
+  command: string,
+  cwd: string,
+  options: RunShellCommandOptions = {},
+): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn(command, {
+    const baseEnv = envWithoutFinalizer(options.baseEnv);
+    const child = (options.spawn ?? spawn)(command, {
       cwd,
-      env: envWithoutFinalizer(),
+      env: { ...baseEnv, ...options.env },
       shell: true,
       stdio: "inherit",
     });
 
     child.on("error", () => resolve(1));
-    child.on("close", (code) => resolve(code ?? 1));
+    child.on("close", (code: number | null) => resolve(code ?? 1));
   });
 }

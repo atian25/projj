@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { Repo } from "../src/repos";
-import { envWithoutFinalizer, filterReposBySelector, resolveCommand, shellQuote } from "../src/run";
+import {
+  envWithoutFinalizer,
+  filterReposBySelector,
+  resolveCommand,
+  runShellCommand,
+  shellQuote,
+} from "../src/run";
 
 describe("run", () => {
   test("configured task takes precedence over raw command", () => {
@@ -45,6 +51,38 @@ describe("run", () => {
 
     expect(env.PROJJ_FINALIZER_FILE).toBeUndefined();
     expect(env.PATH).toBe("x");
+  });
+
+  test("run shell command merges extra environment", async () => {
+    const calls: Array<{ command: string; cwd: string; env: NodeJS.ProcessEnv }> = [];
+    const code = await runShellCommand("echo ok", "/repo", {
+      env: { PROJJ_EVENT: "post_clone" },
+      baseEnv: {
+        PATH: "/bin",
+        PROJJ_FINALIZER_FILE: "/tmp/finalizer",
+      },
+      spawn: (command, options) => {
+        calls.push({ command, cwd: options.cwd, env: options.env });
+        return {
+          on(event: "error" | "close", callback: (() => void) | ((code: number | null) => void)) {
+            if (event === "close") callback(0);
+            return this;
+          },
+        };
+      },
+    });
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      {
+        command: "echo ok",
+        cwd: "/repo",
+        env: {
+          PATH: "/bin",
+          PROJJ_EVENT: "post_clone",
+        },
+      },
+    ]);
   });
 });
 
