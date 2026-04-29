@@ -78,6 +78,8 @@ projj run test
 projj run status --filter 'atian25/*'
 projj run status --filter 'github.com/atian25/*'
 projj run git status --all
+projj run -- ls -a
+projj run --filter egg-view -- ls -a
 projj run status -- --short
 ```
 
@@ -102,6 +104,13 @@ go.mod                -> go test/build/fmt/vet/...
 ```
 
 For example, if a repository has `package.json` with `scripts.test`, then `projj run test --filter <repo>` runs that package script in the repository. If another matched repository is a Go module, the same command can resolve to `go test ./...` there.
+
+Use `--` before the command to force a raw shell command and skip task resolution:
+
+```sh
+projj run -- test -f package.json
+projj run --filter egg-view -- ls -a
+```
 
 `run --all` and `run --filter` print the original task or command first, then the resolved command for each repository:
 

@@ -219,6 +219,66 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "git status", cwd }]);
   });
 
+  test("run treats command after -- as forced raw command", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\ntest = "global test"\n`,
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "--", "test", "-f", "package.json"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([{ command: "test -f package.json", cwd }]);
+  });
+
+  test("run forced raw command works with --filter", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "--filter", "atian25/*", "--", "ls", "-a"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Running in 1 repositories: ls -a\n" +
+        "==> github.com/atian25/projj\n" +
+        "$ ls -a\n",
+    );
+    expect(calls).toEqual([{ command: "ls -a", cwd: repoPath }]);
+  });
+
   test("run keeps task match when appending args after --", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
