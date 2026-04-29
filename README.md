@@ -67,7 +67,7 @@ projj run --list --filter egg-view
 projj run --list --all
 ```
 
-Tasks are grouped by source, such as `.projj.toml`, `package.json`, detected project files, and global tasks.
+Tasks are grouped by source, such as `.projj.toml`, `package.json`, detected project files, and global tasks. The global group includes the config file path so you know where to edit it.
 
 ### `projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]`
 
