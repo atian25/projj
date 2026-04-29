@@ -192,6 +192,36 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "git status --short", cwd }]);
   });
 
+  test("run resolves package script in current cwd before global task", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\ntest = "global test"\n`,
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    await writeFile(join(cwd, "bun.lock"), "");
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "test", "--", "--watch"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([{ command: "bun run test -- --watch", cwd }]);
+  });
+
   test("run with --filter executes only matching repositories without --all", async () => {
     const home = await tempDir();
     const base = join(home, "repos");
@@ -217,11 +247,51 @@ describe("cli", () => {
 
     expect(code).toBe(0);
     expect(stdout.join("")).toBe(
-      "Running in 1 repositories: git status --short\n" +
+      "Running in 1 repositories: status\n" +
         "==> github.com/atian25/projj\n" +
         "$ git status --short\n",
     );
     expect(calls).toEqual([{ command: "git status --short", cwd: projjPath }]);
+  });
+
+  test("run with --filter resolves task independently in each repository", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const webPath = await createRepo(base, "github.com", "atian25", "web");
+    const apiPath = await createRepo(base, "github.com", "atian25", "api");
+    await writeFile(join(webPath, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    await writeFile(join(webPath, "pnpm-lock.yaml"), "");
+    await writeFile(join(apiPath, "go.mod"), "module example.com/api\n");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "test", "--filter", "atian25/*"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Running in 2 repositories: test\n" +
+        "==> github.com/atian25/api\n" +
+        "$ go test ./...\n" +
+        "==> github.com/atian25/web\n" +
+        "$ pnpm run test\n",
+    );
+    expect(calls).toEqual([
+      { command: "go test ./...", cwd: apiPath },
+      { command: "pnpm run test", cwd: webPath },
+    ]);
   });
 
   test("run --all with --filter behaves like --filter", async () => {
