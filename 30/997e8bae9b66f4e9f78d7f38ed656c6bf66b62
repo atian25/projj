@@ -1,0 +1,61 @@
+src/index.ts
+  6c6716b5d0a08184 1-7
+src/repos.ts
+  6c6716b5d0a08184 1-86
+test/repos.test.ts
+  6c6716b5d0a08184 1-131
+src/git.ts
+  6c6716b5d0a08184 1-45
+src/shell.ts
+  6c6716b5d0a08184 1-61
+src/config.ts
+  6c6716b5d0a08184 1-108
+test/config.test.ts
+  6c6716b5d0a08184 1-81
+test/select.test.ts
+  6c6716b5d0a08184 1-29
+tsconfig.json
+  6c6716b5d0a08184 1-13
+package.json
+  6c6716b5d0a08184 1-19
+src/run.ts
+  6c6716b5d0a08184 1-46
+test/run.test.ts
+  6c6716b5d0a08184 1-54
+src/output.ts
+  6c6716b5d0a08184 1-14
+test/git.test.ts
+  6c6716b5d0a08184 1-72
+src/cli.ts
+  6c6716b5d0a08184 1-232
+src/select.ts
+  6c6716b5d0a08184 1-82
+test/git-url.test.ts
+  6c6716b5d0a08184 1-168
+test/cli.test.ts
+  6c6716b5d0a08184 1-465
+src/git-url.ts
+  6c6716b5d0a08184 1-321
+test/shell.test.ts
+  6c6716b5d0a08184 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "30997e8bae9b66f4e9f78d7f38ed656c6bf66b62",
+  "prompts": {
+    "6c6716b5d0a08184": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dd1e0-4f23-7f73-b498-87169e8b72c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "TZ",
+      "messages": [],
+      "total_additions": 2010,
+      "total_deletions": 0,
+      "accepted_lines": 2167,
+      "overriden_lines": 0
+    }
+  }
+}
