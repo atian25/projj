@@ -1,0 +1,23 @@
+test/git.test.ts
+  6c6716b5d0a08184 72,81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "224e033fd83b7fc9ffb648247e8ef24b8e1a943e",
+  "prompts": {
+    "6c6716b5d0a08184": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dd1e0-4f23-7f73-b498-87169e8b72c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "TZ",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 5,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
