@@ -1,0 +1,28 @@
+README.md
+  d6e7ad998996405c 81-82,108-113
+test/cli.test.ts
+  d6e7ad998996405c 222-281
+src/cli.ts
+  d6e7ad998996405c 222-227,234-237,239-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "8d60f9c2001761a4dc0ca4ad567293ae0d2b7c4e",
+  "prompts": {
+    "d6e7ad998996405c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dd758-143b-7e40-8f84-b969b64a7e9b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "TZ",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 7,
+      "accepted_lines": 88,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/1cd46914cd3527a3e0e6bd3676142b05a3126ecf95536fba4aeb2ca038a26943"
+    }
+  }
+}
