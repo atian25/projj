@@ -1,0 +1,19 @@
+{
+  "name": "projj",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "projj": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "smol-toml": "^1.4.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}
