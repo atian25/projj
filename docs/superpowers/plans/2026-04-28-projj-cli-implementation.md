@@ -149,7 +149,7 @@ const HELP = `projj
 
 Usage:
   projj init
-  projj clone <repo> [--base <path>] [--cd]
+  projj clone <repo> [--base <path>] [--no-cd]
   projj find [搜索词] [--list]
   projj run <命令或任务> [--all] [--match <regex>] [-- ...args]
   projj shell-init <zsh|bash|fish>
@@ -786,14 +786,14 @@ export async function cloneRepo(cloneUrl: string, targetPath: string): Promise<v
 
 修改 `src/cli.ts`：
 
-- 解析 `projj clone <repo> [--base <path>] [--cd]`。
+- 解析 `projj clone <repo> [--base <path>] [--no-cd]`。
 - 用 `loadConfig()` 获取 `platform` 和默认 base。
 - 用 `parseRepoInput()` 解析 repo 输入。
 - 默认 base 使用配置中的第一个 base。
 - `--base <path>` 覆盖本次 clone 的 base。
 - 目标路径存在时报告 `exists <path>` 并成功退出。
 - 目标路径不存在时执行 clone，并报告 `cloned <path>`。
-- 带 `--cd` 时写入 `cd:` finalizer；没有 shell 集成时打印路径并给出启用提示。
+- 默认写入 `cd:` finalizer；没有 shell 集成时打印路径并给出启用提示。`--no-cd` 关闭本次跳转。
 
 - [ ] **步骤 5：运行测试并提交**
 
@@ -927,32 +927,34 @@ HOME="$tmp_home" bun run src/index.ts shell-init zsh
 
 - [ ] **步骤 3：更新 README**
 
-把 `README.md` 更新为中文使用说明：
+把 `README.md` 更新为面向用户的英文使用说明：
 
 ```md
 # projj
 
-`projj` 管理本地 git 仓库目录。
+`projj` manages local git repository directories.
 
-目录规范：
+Directory convention:
 
 ```text
 ~/projj/github.com/atian25/projj
 ~/projj/github.com/eggjs/egg
 ```
 
-## 开始使用
+## Quick Start
 
 ```sh
+bun install
+bun link
 projj init
 eval "$(projj shell-init zsh)"
-projj clone atian25/projj --cd
+projj clone atian25/projj
 projj find egg
 projj find --list
 projj run status --all
 ```
 
-配置文件位于：
+Config file:
 
 ```text
 ~/.projj/config.toml

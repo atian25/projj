@@ -31,7 +31,7 @@ shell 集成通过 finalizer 文件完成。CLI 可以请求当前 shell 执行�
 
 ```text
 projj init
-projj clone <repo> [--base <path>] [--cd]
+projj clone <repo> [--base <path>] [--no-cd]
 projj find [搜索词] [--list]
 projj run <命令或任务> [--all] [--match <regex>] [-- ...args]
 projj shell-init <zsh|bash|fish>
@@ -59,7 +59,7 @@ fetch = "git fetch --all --prune"
 
 `init` 不覆盖已有配置。以后如果需要，可以再加显式覆盖参数。
 
-### `projj clone <repo> [--base <path>] [--cd]`
+### `projj clone <repo> [--base <path>] [--no-cd]`
 
 把远程 git 仓库 clone 到规范目录结构中。
 
@@ -78,11 +78,14 @@ git@github.com:atian25/projj.git
 <base>/<host>/<owner>/<repo>
 ```
 
+HTTPS 页面 URL 会归一化为仓库 URL，例如 GitHub/GitLab 的 `tree`、`issues`、`pull` 等页面路径会解析到对应仓库。第一版保持固定三层目录模型，只支持 `owner/repo` 仓库路径；`group/sub/repo` 这类多级 group 输入会被拒绝。
+
 如果配置了多个 base，`clone` 默认使用第一个 base。`--base <path>` 可以为本次 clone 指定 base。
+命令行传入的 `--base <path>` 支持 `~`、绝对路径和相对路径；相对路径按当前工作目录解析。配置文件中的相对路径仍按 `~/.projj` 解析。
 
 如果目标路径已经存在，不重复 clone。命令报告已有路径并成功退出。
 
-`--cd` 表示 clone 成功后跳转到目标路径。如果路径已经存在，也跳转到已有路径。这个跳转通过 finalizer 机制完成，所以只有加载了 shell 集成时才会改变当前 shell 的目录。没有 shell 集成时，命令打印目标路径，并提示如何启用 shell 集成。
+clone 成功后默认跳转到目标路径。如果路径已经存在，也跳转到已有路径。这个跳转通过 finalizer 机制完成，所以只有加载了 shell 集成时才会改变当前 shell 的目录。没有 shell 集成时，命令打印目标路径，并提示如何启用 shell 集成。`--no-cd` 可以关闭本次跳转，只执行 clone。
 
 ### `projj find [搜索词] [--list]`
 
@@ -127,11 +130,13 @@ base/host/owner/repo/.git
 解析顺序：
 
 1. 如果 `<命令或任务>` 命中配置里的 `[tasks]`，运行对应命令。
-2. 否则把 `<命令或任务>` 当作原始 shell 命令运行。
+2. 否则把位置参数拼接成原始 shell 命令运行，例如 `projj run git status` 等价于运行 `git status`。
 
 不带 `--all` 时，命令在当前工作目录运行。
 
 带 `--all` 时，扫描全部仓库，并在每个仓库路径下运行命令。`--match <regex>` 用 `host/owner/repo` 过滤仓库。
+
+`--all` 会先输出本次展开后的真实命令和匹配仓库数量，再在每个仓库执行前输出仓库 key 和 `$ <命令>`。如果命令本身没有输出，`projj` 不额外伪造结果。
 
 `--` 后面的参数追加到解析后的命令后面。
 

@@ -1,1 +1,99 @@
 # projj
+
+`projj` manages local git repository directories.
+
+Directory convention:
+
+```text
+~/projj/github.com/atian25/projj
+~/projj/github.com/eggjs/egg
+```
+
+## Quick Start
+
+```sh
+bun install
+bun link
+projj init
+eval "$(projj shell-init zsh)"
+projj clone atian25/projj
+projj find egg
+projj find --list
+projj run status --all
+```
+
+Config file:
+
+```text
+~/.projj/config.toml
+```
+
+To install shell integration for future zsh sessions:
+
+```sh
+echo 'eval "$(projj shell-init zsh)"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+## Commands
+
+### `projj init`
+
+Create the default config file. Existing config is not overwritten.
+
+### `projj clone <repo> [--base <path>] [--no-cd]`
+
+Clone a repository into the conventional directory. Short names, HTTPS URLs, and SSH URLs are supported:
+
+```sh
+projj clone eggjs/egg
+projj clone https://github.com/eggjs/egg.git
+projj clone git@github.com:atian25/projj.git
+```
+
+Short names use the configured `platform`. `--base` overrides the root directory for this clone; relative paths are resolved from the current directory. By default, clone attempts to change the current shell to the repository directory after cloning. Use `--no-cd` to clone without jumping.
+
+### `projj find [query] [--list]`
+
+Scan configured `base` directories and find repositories. By default, it jumps to the selected repository. `--list` only prints matching paths, one per line, for scripts.
+
+### `projj run <command-or-task> [--all] [--match <regex>] [-- ...args]`
+
+Run a configured task or a raw shell command. Without `--all`, the command runs in the current directory. With `--all`, it runs in every discovered repository. `--match` filters by repository key:
+
+```sh
+projj run status --all --match '^github\.com/atian25/'
+projj run git status --all
+projj run status -- --short
+```
+
+`run --all` prints the expanded command before running it in each repository:
+
+```text
+Running in 2 repositories: git status --short
+==> github.com/eggjs/egg
+$ git status --short
+==> github.com/eggjs/egg-view
+$ git status --short
+```
+
+If the command itself prints nothing, there is no extra result output. For example, `git status --short` is silent when a repository is clean.
+
+Default tasks:
+
+```toml
+[tasks]
+status = "git status --short"
+pull = "git pull --ff-only"
+fetch = "git fetch --all --prune"
+```
+
+### `projj shell-init <zsh|bash|fish>`
+
+Print shell integration code:
+
+```sh
+eval "$(projj shell-init zsh)"
+```
+
+Shell integration lets `projj clone` and `projj find` change the current shell directory.
