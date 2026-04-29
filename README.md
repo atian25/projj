@@ -57,12 +57,13 @@ Short names use the configured `platform`. `--base` overrides the root directory
 
 Scan configured `base` directories and find repositories. By default, it jumps to the selected repository. `--list` only prints matching paths, one per line, for scripts.
 
-### `projj run <command-or-task> [--all] [--match <regex>] [-- ...args]`
+### `projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]`
 
-Run a configured task or a raw shell command. Without `--all`, the command runs in the current directory. With `--all`, it runs in every discovered repository. `--match` filters by repository key:
+Run a configured task or a raw shell command. Without `--all` or `--filter`, the command runs in the current directory. With `--all`, it runs in every discovered repository. With `--filter`, it runs in matching repositories by name, `owner/repo`, or `host/owner/repo`. `*` wildcards are supported:
 
 ```sh
-projj run status --all --match '^github\.com/atian25/'
+projj run status --filter 'atian25/*'
+projj run status --filter 'github.com/atian25/*'
 projj run git status --all
 projj run status -- --short
 ```

@@ -11,7 +11,7 @@ import type { Output } from "./output";
 import { formatError } from "./output";
 import { findRepos, scanRepos } from "./repos";
 import {
-  filterReposByMatch,
+  filterReposBySelector,
   resolveCommand,
   runShellCommand as defaultRunShellCommand,
 } from "./run";
@@ -37,7 +37,7 @@ Usage:
   projj init
   projj clone <repo> [--base <path>] [--no-cd]
   projj find [query] [--list]
-  projj run <command-or-task> [--all] [--match <regex>] [-- ...args]
+  projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]
   projj shell-init <zsh|bash|fish>
 `;
 
@@ -168,13 +168,13 @@ export function createCli(deps: CliDeps) {
               args: commandArgs,
               options: {
                 all: { type: "boolean", default: false },
-                match: { type: "string" },
+                filter: { type: "string" },
               },
               allowPositionals: true,
             });
 
             if (parsed.positionals.length === 0) {
-              output.stderr("Usage: projj run <command-or-task> [--all] [--match <regex>] [-- ...args]\n");
+              output.stderr("Usage: projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]\n");
               return 1;
             }
 
@@ -189,13 +189,16 @@ export function createCli(deps: CliDeps) {
               config.tasks,
             );
 
-            if (!parsed.values.all) {
+            const filter =
+              typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
+
+            if (!parsed.values.all && !filter) {
               return runShellCommand(runCommand, cwd);
             }
 
-            const repos = filterReposByMatch(
+            const repos = filterReposBySelector(
               await scanRepos(config.base),
-              typeof parsed.values.match === "string" ? parsed.values.match : undefined,
+              filter,
             );
             let exitCode = 0;
             output.stdout(`Running in ${repos.length} repositories: ${runCommand}\n`);
