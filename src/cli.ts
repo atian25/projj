@@ -12,12 +12,12 @@ import { formatError } from "./output";
 import { findRepos, scanRepos } from "./repos";
 import {
   filterReposBySelector,
-  resolveCommand,
   runShellCommand as defaultRunShellCommand,
 } from "./run";
 import { selectRepo } from "./select";
 import { shellInit, writeCdFinalizer } from "./shell";
 import type { SupportedShell } from "./shell";
+import { resolveRunCommand } from "./tasks";
 
 export type CliDeps = {
   stdout: Output["stdout"];
@@ -181,18 +181,23 @@ export function createCli(deps: CliDeps) {
             const config = await loadConfig(configPath, home);
             const [first, ...remaining] = parsed.positionals;
             const commandOrTask = first!;
-            const isTask = Object.prototype.hasOwnProperty.call(config.tasks, commandOrTask);
-            const appendedArgs = isTask ? [...remaining, ...extraArgs] : extraArgs;
-            const runCommand = resolveCommand(
-              isTask ? commandOrTask : [commandOrTask, ...remaining].join(" "),
-              appendedArgs,
-              config.tasks,
-            );
+            const isGlobalTask = Object.prototype.hasOwnProperty.call(config.tasks, commandOrTask);
+            const commandInput =
+              isGlobalTask || remaining.length === 0
+                ? commandOrTask
+                : [commandOrTask, ...remaining].join(" ");
+            const appendedArgs = isGlobalTask ? [...remaining, ...extraArgs] : extraArgs;
 
             const filter =
               typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
 
             if (!parsed.values.all && !filter) {
+              const runCommand = await resolveRunCommand(
+                commandInput,
+                appendedArgs,
+                config.tasks,
+                cwd,
+              );
               return runShellCommand(runCommand, cwd);
             }
 
@@ -201,8 +206,14 @@ export function createCli(deps: CliDeps) {
               filter,
             );
             let exitCode = 0;
-            output.stdout(`Running in ${repos.length} repositories: ${runCommand}\n`);
+            output.stdout(`Running in ${repos.length} repositories: ${commandInput}\n`);
             for (const repo of repos) {
+              const runCommand = await resolveRunCommand(
+                commandInput,
+                appendedArgs,
+                config.tasks,
+                repo.path,
+              );
               output.stdout(`==> ${repo.key}\n`);
               output.stdout(`$ ${runCommand}\n`);
               const code = await runShellCommand(runCommand, repo.path);

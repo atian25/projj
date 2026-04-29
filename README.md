@@ -62,20 +62,43 @@ Scan configured `base` directories and find repositories. By default, it jumps t
 Run a configured task or a raw shell command. Without `--all` or `--filter`, the command runs in the current directory. With `--all`, it runs in every discovered repository. With `--filter`, it runs in matching repositories by name, `owner/repo`, or `host/owner/repo`. `*` wildcards are supported:
 
 ```sh
+projj run test
 projj run status --filter 'atian25/*'
 projj run status --filter 'github.com/atian25/*'
 projj run git status --all
 projj run status -- --short
 ```
 
-`run --all` prints the expanded command before running it in each repository:
+Tasks are resolved in the execution directory. Project-local definitions take precedence over global shortcuts:
 
 ```text
-Running in 2 repositories: git status --short
+1. .projj.toml [tasks]
+2. project task files
+3. ~/.projj/config.toml [tasks]
+4. raw shell command
+```
+
+Project task files include:
+
+```text
+package.json scripts  -> bun/pnpm/yarn/npm run <script>
+Makefile              -> make <target>
+justfile / Justfile   -> just <recipe>
+Taskfile.yml          -> task <task>
+Cargo.toml            -> cargo test/build/check/run/...
+go.mod                -> go test/build/fmt/vet/...
+```
+
+For example, if a repository has `package.json` with `scripts.test`, then `projj run test --filter <repo>` runs that package script in the repository. If another matched repository is a Go module, the same command can resolve to `go test ./...` there.
+
+`run --all` and `run --filter` print the original task or command first, then the resolved command for each repository:
+
+```text
+Running in 2 repositories: test
 ==> github.com/eggjs/egg
-$ git status --short
+$ npm run test
 ==> github.com/eggjs/egg-view
-$ git status --short
+$ go test ./...
 ```
 
 If the command itself prints nothing, there is no extra result output. For example, `git status --short` is silent when a repository is clean.
