@@ -544,6 +544,31 @@ describe("cli", () => {
     );
   });
 
+  test("run failure summary explains common exit codes", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      runShellCommand: async () => 127,
+    });
+
+    const code = await cli.run(["run", "--filter", "atian25/*", "--", "ll"]);
+
+    expect(code).toBe(127);
+    expect(stderr.join("")).toBe(
+      "Failed in 1 repository:\n" +
+        "- github.com/atian25/projj exited 127 (command not found)\n",
+    );
+  });
+
   test("run --all with --filter behaves like --filter", async () => {
     const home = await tempDir();
     const base = join(home, "repos");

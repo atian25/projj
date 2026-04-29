@@ -38,7 +38,7 @@ $ bun test
 
 ```text
 Failed in 1 repository:
-- github.com/eggjs/egg-view exited 127
+- github.com/eggjs/egg-view exited 127 (command not found)
 ```
 
 多个失败：
@@ -49,7 +49,7 @@ Failed in 2 repositories:
 - github.com/foo/bar exited 1
 ```
 
-失败汇总输出到 stderr。最终退出码仍沿用当前策略：返回最后一个非 0 code。
+失败汇总输出到 stderr。常见退出码会附加简短解释，例如 `126 (command found but not executable)`、`127 (command not found)`、`130 (interrupted)`。其他退出码只显示数字。最终退出码仍沿用当前策略：返回最后一个非 0 code。
 
 ### 空匹配
 

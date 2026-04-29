@@ -296,7 +296,7 @@ export function createCli(deps: CliDeps) {
               const noun = failures.length === 1 ? "repository" : "repositories";
               output.stderr(`Failed in ${failures.length} ${noun}:\n`);
               for (const failure of failures) {
-                output.stderr(`- ${failure.key} exited ${failure.code}\n`);
+                output.stderr(`- ${failure.key} exited ${formatExitCode(failure.code)}\n`);
               }
             }
 
@@ -323,4 +323,22 @@ function expandCliPath(value: string, home: string, cwd: string): string {
   if (value.startsWith("~/")) return join(home, value.slice(2));
   if (isAbsolute(value)) return value;
   return resolve(cwd, value);
+}
+
+function formatExitCode(code: number): string {
+  const explanation = exitCodeExplanation(code);
+  return explanation ? `${code} (${explanation})` : String(code);
+}
+
+function exitCodeExplanation(code: number): string | undefined {
+  switch (code) {
+    case 126:
+      return "command found but not executable";
+    case 127:
+      return "command not found";
+    case 130:
+      return "interrupted";
+    default:
+      return undefined;
+  }
 }
