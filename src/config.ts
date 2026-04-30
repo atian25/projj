@@ -10,20 +10,20 @@ export type ProjjConfig = {
 };
 
 export type HookConfig = {
-  event: "post_clone";
+  event: HookEvent;
   filter?: string;
   tasks: string[];
 };
+
+export type HookEvent = "post_clone" | `pre_${string}` | `post_${string}`;
+
+const HOOK_EVENT_PATTERN = /^(pre|post)_[A-Za-z0-9_.-]+$/;
 
 export function defaultConfig(): ProjjConfig {
   return {
     base: ["~/projj"],
     platform: "github.com",
-    tasks: {
-      status: "git status --short",
-      pull: "git pull --ff-only",
-      fetch: "git fetch --all --prune",
-    },
+    tasks: {},
     hooks: [],
   };
 }
@@ -101,8 +101,10 @@ function normalizeHookConfig(value: unknown, index: number): HookConfig {
   if (!isRecord(value)) {
     throw new Error(`invalid config: hooks[${index}] must be an object`);
   }
-  if (value.event !== "post_clone") {
-    throw new Error(`invalid config: hooks[${index}].event must be post_clone`);
+  if (!isHookEvent(value.event)) {
+    throw new Error(
+      `invalid config: hooks[${index}].event must be post_clone or pre_<task>/post_<task>`,
+    );
   }
   if (
     !Array.isArray(value.tasks) ||
@@ -116,10 +118,18 @@ function normalizeHookConfig(value: unknown, index: number): HookConfig {
   }
 
   return {
-    event: "post_clone",
+    event: value.event,
     tasks: [...value.tasks],
     ...(typeof value.filter === "string" ? { filter: value.filter } : {}),
   };
+}
+
+function isHookEvent(value: unknown): value is HookEvent {
+  return (
+    typeof value === "string" &&
+    (value === "post_clone" ||
+      (value !== "pre_clone" && value !== "post_clone" && HOOK_EVENT_PATTERN.test(value)))
+  );
 }
 
 export async function loadConfig(

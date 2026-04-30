@@ -86,7 +86,7 @@ describe("cli", () => {
 
     expect(code).toBe(1);
     expect(stdout.join("")).toBe("");
-    expect(stderr.join("")).toContain("Usage: projj run <command-or-task>");
+    expect(stderr.join("")).toContain("Usage: projj run <task>");
   });
 
   test("run --list prints tasks in current cwd", async () => {
@@ -144,11 +144,7 @@ describe("cli", () => {
       "Tasks in 1 repositories\n\n" +
         "==> github.com/atian25/web\n" +
         "package.json\n" +
-        "  test  vitest\n" +
-        `global (${configPath})\n` +
-        "  fetch   git fetch --all --prune\n" +
-        "  pull    git pull --ff-only\n" +
-        "  status  git status --short\n",
+        "  test  vitest\n",
     );
   });
 
@@ -192,12 +188,15 @@ describe("cli", () => {
     expect(stderr.join("")).toContain("Usage: projj run --list");
   });
 
-  test("run without --all executes in cwd", async () => {
+  test("run without --all executes task in cwd", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status"\n`,
+    );
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
       stdout: () => {},
@@ -211,10 +210,112 @@ describe("cli", () => {
       },
     });
 
-    const code = await cli.run(["run", "git status"]);
+    const code = await cli.run(["run", "status"]);
 
     expect(code).toBe(0);
     expect(calls).toEqual([{ command: "git status", cwd }]);
+  });
+
+  test("run returns 1 when task is not found", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["run", "missing"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe(
+      "Task not found: missing\n" +
+        "Define missing in .projj.toml [tasks], add a supported project task file, or run a raw command with `projj run -- missing`.\n",
+    );
+  });
+
+  test("run task not found suggests detected package scripts or raw command", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["run", "missing"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe(
+      "Task not found: missing\n" +
+        "Detected package.json. Add scripts.missing to package.json or run a raw command with `projj run -- missing`.\n",
+    );
+  });
+
+  test("run task not found suggests config or raw command when no providers are detected", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["run", "missing"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe(
+      "Task not found: missing\n" +
+        "Define missing in .projj.toml [tasks], add a supported project task file, or run a raw command with `projj run -- missing`.\n",
+    );
+  });
+
+  test("run task not found suggests all detected task providers", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    await writeFile(join(cwd, "Makefile"), "test:\n\t@echo test\n");
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      configPath,
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["run", "missing"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe(
+      "Task not found: missing\n" +
+        "Detected package.json or Makefile. Add missing to the matching project task config or run a raw command with `projj run -- missing`.\n",
+    );
   });
 
   test("run --dry-run prints resolved current-directory command without executing", async () => {
@@ -251,12 +352,471 @@ describe("cli", () => {
     );
   });
 
+  test("start --dry-run prints resolved current-project command without executing", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const stdout: string[] = [];
+    let calls = 0;
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["start", "--dry-run", "--", "--host", "0.0.0.0"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would start current project\n" +
+        "$ npm run dev -- --host 0.0.0.0\n",
+    );
+  });
+
+  test("start executes resolved command in current directory", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const calls: Array<{ command: string; cwd: string }> = [];
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstart = "bun dev"\n');
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["start", "--", "--open"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([{ command: "bun dev --open", cwd }]);
+  });
+
+  test("start runs lifecycle hooks around the resolved command", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        'platform = "github.com"',
+        "",
+        "[tasks]",
+        'prepare = "echo prepare"',
+        'announce = "echo started"',
+        "",
+        "[[hooks]]",
+        'event = "pre_start"',
+        'filter = "atian25/*"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'filter = "github.com/atian25/*"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstart = "bun dev"\n');
+    const calls: Array<{ command: string; cwd: string; event: string | undefined }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd, options) => {
+        calls.push({ command, cwd: runCwd, event: options?.env?.PROJJ_EVENT });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["start"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: "echo prepare", cwd, event: "pre_start" },
+      { command: "bun dev", cwd, event: undefined },
+      { command: "echo started", cwd, event: "post_start" },
+    ]);
+  });
+
+  test("run start uses the same built-in fallback as start", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const stdout: string[] = [];
+    let calls = 0;
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "start", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would run in current directory: start\n" +
+        "$ npm run dev\n",
+    );
+  });
+
+  test("run start runs start lifecycle hooks", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare"',
+        'announce = "echo started"',
+        "",
+        "[[hooks]]",
+        'event = "pre_start"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstart = "bun dev"\n');
+    const calls: Array<{ command: string; event: string | undefined }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, _runCwd, options) => {
+        calls.push({ command, event: options?.env?.PROJJ_EVENT });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "start"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: "echo prepare", event: "pre_start" },
+      { command: "bun dev", event: undefined },
+      { command: "echo started", event: "post_start" },
+    ]);
+  });
+
+  test("run task runs matching generic lifecycle hooks", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${join(home, "repos")}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare-test"',
+        'announce = "echo tested"',
+        "",
+        "[[hooks]]",
+        'event = "pre_test"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_test"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+    const calls: Array<{ command: string; event: string | undefined }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, _runCwd, options) => {
+        calls.push({ command, event: options?.env?.PROJJ_EVENT });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "test"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: "echo prepare-test", event: "pre_test" },
+      { command: "npm run test", event: undefined },
+      { command: "echo tested", event: "post_test" },
+    ]);
+  });
+
+  test("run raw command does not run lifecycle hooks", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${join(home, "repos")}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare"',
+        "",
+        "[[hooks]]",
+        'event = "pre_echo"',
+        'tasks = ["prepare"]',
+        "",
+      ].join("\n"),
+    );
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command) => {
+        calls.push(command);
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "--", "echo ok"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual(["echo ok"]);
+  });
+
+  test("run start with filter runs start lifecycle hooks in matching repositories", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "web");
+    await createRepo(base, "github.com", "eggjs", "egg");
+    await writeFile(join(repoPath, "package.json"), JSON.stringify({ scripts: { dev: "vite" } }));
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare"',
+        'announce = "echo started"',
+        "",
+        "[[hooks]]",
+        'event = "pre_start"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    const calls: Array<{ command: string; cwd: string; event: string | undefined }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd, options) => {
+        calls.push({ command, cwd: runCwd, event: options?.env?.PROJJ_EVENT });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["run", "start", "--filter", "atian25/*"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: "echo prepare", cwd: repoPath, event: "pre_start" },
+      { command: "npm run dev", cwd: repoPath, event: undefined },
+      { command: "echo started", cwd: repoPath, event: "post_start" },
+    ]);
+  });
+
+  test("start skips main command and post hook when pre_start fails", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare"',
+        'announce = "echo started"',
+        "",
+        "[[hooks]]",
+        'event = "pre_start"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstart = "bun dev"\n');
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command) => {
+        calls.push(command);
+        return 9;
+      },
+    });
+
+    const code = await cli.run(["start"]);
+
+    expect(code).toBe(9);
+    expect(calls).toEqual(["echo prepare"]);
+  });
+
+  test("start skips post_start when main command fails", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'announce = "echo started"',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstart = "bun dev"\n');
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command) => {
+        calls.push(command);
+        return command === "bun dev" ? 8 : 0;
+      },
+    });
+
+    const code = await cli.run(["start"]);
+
+    expect(code).toBe(8);
+    expect(calls).toEqual(["bun dev"]);
+  });
+
+  test("start returns post_start failure code", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'announce = "echo started"',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstart = "bun dev"\n');
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command) => {
+        calls.push(command);
+        return command === "echo started" ? 6 : 0;
+      },
+    });
+
+    const code = await cli.run(["start"]);
+
+    expect(code).toBe(6);
+    expect(calls).toEqual(["bun dev", "echo started"]);
+  });
+
+  test("start returns 1 when no start command is found", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+      home,
+      cwd,
+    });
+
+    const code = await cli.run(["start"]);
+
+    expect(code).toBe(1);
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toBe("No start command found in current directory.\n");
+  });
+
   test("run --dry-run supports forced raw command", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     let calls = 0;
     const cli = createCli({
@@ -281,16 +841,17 @@ describe("cli", () => {
     );
   });
 
-  test("run accepts raw command split across positionals", async () => {
+  test("run rejects extra positional args instead of treating them as raw command", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
     await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    const stderr: string[] = [];
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
       stdout: () => {},
-      stderr: () => {},
+      stderr: (text) => stderr.push(text),
       configPath,
       home,
       cwd,
@@ -302,8 +863,12 @@ describe("cli", () => {
 
     const code = await cli.run(["run", "git", "status"]);
 
-    expect(code).toBe(0);
-    expect(calls).toEqual([{ command: "git status", cwd }]);
+    expect(code).toBe(1);
+    expect(stderr.join("")).toBe(
+      "Usage: projj run <task> [--all] [--filter <selector>] [-- ...args]\n" +
+        "Use `projj run -- git status` for raw shell commands.\n",
+    );
+    expect(calls).toEqual([]);
   });
 
   test("run treats command after -- as forced raw command", async () => {
@@ -341,7 +906,10 @@ describe("cli", () => {
     const repoPath = await createRepo(base, "github.com", "atian25", "projj");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
@@ -372,7 +940,10 @@ describe("cli", () => {
     await createRepo(base, "github.com", "atian25", "projj");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     const stderr: string[] = [];
     const calls: Array<{ command: string; cwd: string }> = [];
@@ -442,12 +1013,15 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "git status --short", cwd }]);
   });
 
-  test("run appends args after -- to raw command split across positionals", async () => {
+  test("run appends args after -- to task and does not treat positionals as raw command", async () => {
     const home = await tempDir();
     const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status"\n`,
+    );
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
       stdout: () => {},
@@ -461,7 +1035,7 @@ describe("cli", () => {
       },
     });
 
-    const code = await cli.run(["run", "git", "status", "--", "--short"]);
+    const code = await cli.run(["run", "status", "--", "--short"]);
 
     expect(code).toBe(0);
     expect(calls).toEqual([{ command: "git status --short", cwd }]);
@@ -504,7 +1078,10 @@ describe("cli", () => {
     await createRepo(base, "github.com", "eggjs", "egg");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
@@ -539,7 +1116,10 @@ describe("cli", () => {
     await writeFile(join(apiPath, "go.mod"), "module example.com/api\n");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
@@ -579,7 +1159,10 @@ describe("cli", () => {
     await writeFile(join(webPath, "go.mod"), "module example.com/web\n");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     let calls = 0;
     const cli = createCli({
@@ -611,7 +1194,10 @@ describe("cli", () => {
     const base = join(home, "repos");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stdout: string[] = [];
     const cli = createCli({
       stdout: (text) => stdout.push(text),
@@ -657,7 +1243,10 @@ describe("cli", () => {
     const cwd = await tempDir();
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${join(home, "repos")}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
       stdout: () => {},
@@ -737,7 +1326,10 @@ describe("cli", () => {
     await createRepo(base, "github.com", "eggjs", "changed");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
       stdout: () => {},
@@ -795,7 +1387,10 @@ describe("cli", () => {
     const goodPath = await createRepo(base, "github.com", "atian25", "good");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const stderr: string[] = [];
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
@@ -945,7 +1540,10 @@ describe("cli", () => {
     await createRepo(base, "github.com", "eggjs", "egg");
     const configPath = join(home, ".projj", "config.toml");
     await mkdir(join(home, ".projj"), { recursive: true });
-    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[tasks]\nstatus = "git status --short"\n`,
+    );
     const calls: Array<{ command: string; cwd: string }> = [];
     const cli = createCli({
       stdout: () => {},
@@ -1062,7 +1660,76 @@ describe("cli", () => {
 
     expect(code).toBe(1);
     expect(stdout.join("")).toBe("");
-    expect(stderr.join("")).toContain("Usage: projj clone <repo> [--base <path>] [--no-cd]");
+    expect(stderr.join("")).toContain("Usage: projj clone <repo> [--base <path>] [--no-cd] [--dry-run]");
+  });
+
+  test("clone --dry-run previews clone target without cloning or cd", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const finalizerFile = join(home, "finalizer");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      `base = ["${base}"]\nplatform = "github.com"\n[[hooks]]\nevent = "post_clone"\ntasks = ["setup"]\n`,
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    let cloneCalls = 0;
+    let hookCalls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+      env: { HOME: home, PROJJ_FINALIZER_FILE: finalizerFile },
+      configPath,
+      home,
+      cloneRepo: async () => {
+        cloneCalls += 1;
+      },
+      runShellCommand: async () => {
+        hookCalls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["clone", "atian25/ppt-test", "--dry-run"]);
+    const targetPath = join(base, "github.com", "atian25", "ppt-test");
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would clone git@github.com:atian25/ppt-test.git\n" +
+        `to ${targetPath}\n`,
+    );
+    expect(stderr.join("")).toBe("");
+    expect(cloneCalls).toBe(0);
+    expect(hookCalls).toBe(0);
+    await expect(readFile(finalizerFile, "utf8")).rejects.toThrow();
+  });
+
+  test("clone --dry-run previews existing target without cloning", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const repoPath = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    let cloneCalls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      cloneRepo: async () => {
+        cloneCalls += 1;
+      },
+    });
+
+    const code = await cli.run(["clone", "atian25/projj", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe(`Would skip existing ${repoPath}\n`);
+    expect(cloneCalls).toBe(0);
   });
 
   test("clone prints exists and skips clone when target exists", async () => {

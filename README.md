@@ -19,6 +19,7 @@ eval "$(projj shell-init zsh)"
 projj clone atian25/projj
 projj find egg
 projj find --list
+projj start --dry-run
 projj run status --all
 ```
 
@@ -41,7 +42,7 @@ source ~/.zshrc
 
 Create the default config file. Existing config is not overwritten.
 
-### `projj clone <repo> [--base <path>] [--no-cd]`
+### `projj clone <repo> [--base <path>] [--no-cd] [--dry-run]`
 
 Clone a repository into the conventional directory. Short names, HTTPS URLs, and SSH URLs are supported:
 
@@ -49,9 +50,10 @@ Clone a repository into the conventional directory. Short names, HTTPS URLs, and
 projj clone eggjs/egg
 projj clone https://github.com/eggjs/egg.git
 projj clone git@github.com:atian25/projj.git
+projj clone atian25/ppt-test --dry-run
 ```
 
-Short names use the configured `platform`. `--base` overrides the root directory for this clone; relative paths are resolved from the current directory. By default, clone attempts to change the current shell to the repository directory after cloning. Use `--no-cd` to clone without jumping.
+Short names use the configured `platform`. `--base` overrides the root directory for this clone; relative paths are resolved from the current directory. By default, clone attempts to change the current shell to the repository directory after cloning. Use `--no-cd` to clone without jumping. `--dry-run` prints the clone URL and target path without cloning, running post-clone hooks, or changing directories.
 
 ### Post-clone hooks
 
@@ -129,15 +131,14 @@ projj run --list --all
 
 Tasks are grouped by source, such as `.projj.toml`, `package.json`, detected project files, and global tasks. The global group includes the config file path so you know where to edit it.
 
-### `projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]`
+### `projj run <task> [--all] [--filter <selector>] [-- ...args]`
 
-Run a configured task or a raw shell command. Without `--all` or `--filter`, the command runs in the current directory. With `--all`, it runs in every discovered repository. With `--filter`, it runs in matching repositories by name, `owner/repo`, or `host/owner/repo`. `*` wildcards are supported:
+Run a configured or detected task. Without `--all` or `--filter`, the task runs in the current directory. With `--all`, it runs in every discovered repository. With `--filter`, it runs in matching repositories by name, `owner/repo`, or `host/owner/repo`. `*` wildcards are supported:
 
 ```sh
 projj run test
 projj run status --filter 'atian25/*'
 projj run status --filter 'github.com/atian25/*'
-projj run git status --all
 projj run -- ls -a
 projj run --filter egg-view -- ls -a
 projj run status -- --short
@@ -158,33 +159,78 @@ projj run status --all --changed
 projj run test --filter egg --changed --dry-run
 ```
 
-Tasks are resolved in the execution directory. Project-local definitions take precedence over global shortcuts:
+Tasks are resolved in the execution directory. `projj` asks each provider to look for an explicit task with the requested name, then asks providers for known intent fallbacks such as `start`, `test`, `build`, and `run`.
+
+Provider explicit lookup:
 
 ```text
-1. .projj.toml [tasks]
-2. project task files
-3. ~/.projj/config.toml [tasks]
-4. raw shell command
+.projj.toml provider      -> [tasks].<task>
+package provider          -> package.json scripts.<task>
+make / just / taskfile    -> target / recipe / task named <task>
+global config provider    -> [tasks].<task>
 ```
 
-Project task files include:
+Intent fallback:
 
 ```text
-package.json scripts  -> bun/pnpm/yarn/npm run <script>
-Makefile              -> make <target>
-justfile / Justfile   -> just <recipe>
-Taskfile.yml          -> task <task>
+package.json scripts  -> intent-specific scripts such as dev/serve for start
+Makefile              -> intent-specific targets such as dev/serve/run for start
+justfile / Justfile   -> intent-specific recipes
+Taskfile.yml          -> intent-specific tasks
 Cargo.toml            -> cargo test/build/check/run/...
 go.mod                -> go test/build/fmt/vet/...
 ```
 
-For example, if a repository has `package.json` with `scripts.test`, then `projj run test --filter <repo>` runs that package script in the repository. If another matched repository is a Go module, the same command can resolve to `go test ./...` there.
+Project-local definitions take precedence over global shortcuts, and all explicit tasks take precedence over intent fallback. For example, if global config defines `[tasks].test`, it wins over Cargo's `cargo test` fallback.
 
-Use `--` before the command to force a raw shell command and skip task resolution:
+Provider files include:
+
+```text
+package.json
+Makefile
+justfile / Justfile
+Taskfile.yml / Taskfile.yaml
+Cargo.toml
+go.mod
+```
+
+For example, if a repository has `package.json` with `scripts.test`, then `projj run test --filter <repo>` runs that package script in the repository. If another matched repository is a Go module and has no explicit `test` task, the same command can resolve to `go test ./...` there.
+
+If no task matches, `projj` exits with code 1.
+
+Use `--` before a command to run a raw shell command and skip task resolution and lifecycle hooks:
 
 ```sh
 projj run -- test -f package.json
 projj run --filter egg-view -- ls -a
+```
+
+Lifecycle hooks can run before and after named tasks:
+
+```toml
+[[hooks]]
+event = "pre_test"
+tasks = ["echo preparing"]
+
+[[hooks]]
+event = "post_test"
+tasks = ["echo done"]
+```
+
+Hook event names use `pre_<task>` and `post_<task>`. Raw commands do not run lifecycle hooks.
+
+Legacy detected task names are still listed with their provider prefix:
+
+```text
+detected
+  cargo:test  cargo test
+  go:test     go test ./...
+```
+
+For execution, use the plain task name:
+
+```sh
+projj run test
 ```
 
 `run --all` and `run --filter` print the original task or command first, then the resolved command for each repository:
@@ -201,14 +247,54 @@ If the command itself prints nothing, there is no extra result output. For examp
 
 If `--filter` matches no repositories, `projj` exits with code 1. Batch runs continue after individual repository failures and print a final failure summary to stderr.
 
-Default tasks:
+### `projj start [--dry-run] [-- ...args]`
+
+Start the current project by resolving the most likely local startup command:
+
+```sh
+projj start
+projj start --dry-run
+projj start -- --host 0.0.0.0
+projj run start --filter 'atian25/*'
+```
+
+`projj start` is shorthand for `projj run start` in the current directory. For multi-repository startup, use `projj run start --filter/--all`. It resolves explicit `start` tasks first, then falls back to built-in startup conventions. It does not fall back to raw shell commands. Resolution order is:
+
+```text
+1. Explicit start tasks from the regular `projj run start` resolution chain:
+   - .projj.toml [tasks].start
+   - package.json scripts.start
+   - Makefile / justfile / Taskfile start
+   - ~/.projj/config.toml [tasks].start
+2. Built-in startup fallbacks:
+   - package.json scripts: dev, serve
+   - Makefile / justfile / Taskfile tasks: dev, serve, run
+   - Cargo.toml -> cargo run
+   - go.mod -> go run .
+```
+
+Use `.projj.toml` when a project needs an explicit startup command:
 
 ```toml
 [tasks]
-status = "git status --short"
-pull = "git pull --ff-only"
-fetch = "git fetch --all --prune"
+start = "pnpm dev"
 ```
+
+If no startup command is found, `projj` exits with code 1.
+
+Lifecycle hooks can run before and after the startup command:
+
+```toml
+[[hooks]]
+event = "pre_start"
+tasks = ["echo preparing"]
+
+[[hooks]]
+event = "post_start"
+tasks = ["echo started"]
+```
+
+`pre_start` runs before the resolved startup command. `post_start` runs after the startup command exits successfully.
 
 ### `projj shell-init <zsh|bash|fish>`
 

@@ -1,4 +1,4 @@
-import type { HookConfig } from "./config";
+import type { HookConfig, HookEvent } from "./config";
 import type { RepoInfo } from "./git-url";
 import type { Output } from "./output";
 import type { Repo } from "./repos";
@@ -7,8 +7,6 @@ import {
   runShellCommand as defaultRunShellCommand,
 } from "./run";
 import { resolveRunCommand } from "./tasks";
-
-export type HookEvent = "post_clone";
 
 type RunHooksOptions = {
   event: HookEvent;

@@ -1,8 +1,9 @@
 import { parseArgs } from "node:util";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { getRepoChangeStatus as defaultGetRepoChangeStatus } from "./changed";
 import { createColorTheme, shouldUseColor } from "./color";
-import { defaultConfigPath, loadConfig, saveDefaultConfig } from "./config";
+import { defaultConfig, defaultConfigPath, loadConfig, saveDefaultConfig } from "./config";
+import type { ProjjConfig } from "./config";
 import {
   cloneRepo as defaultCloneRepo,
   pathExists as defaultPathExists,
@@ -22,7 +23,15 @@ import {
 import { selectRepo } from "./select";
 import { shellInit, writeCdFinalizer } from "./shell";
 import type { SupportedShell } from "./shell";
-import { formatTaskList, listRunTasks, resolveRunCommand } from "./tasks";
+import {
+  explainTaskNotFound,
+  formatTaskList,
+  listRunTasks,
+  resolveRunCommand,
+  resolveStartCommand,
+  resolveTaskCommand,
+} from "./tasks";
+import type { TaskNotFoundHint, TaskProviderKind } from "./tasks";
 
 export type CliDeps = {
   stdout: Output["stdout"];
@@ -42,11 +51,12 @@ const HELP = `projj
 
 Usage:
   projj init
-  projj clone <repo> [--base <path>] [--no-cd]
+  projj clone <repo> [--base <path>] [--no-cd] [--dry-run]
   projj find [query] [--list]
   projj hooks run <event> [--all] [--filter <selector>] [--dry-run]
   projj run --list [--all] [--filter <selector>]
-  projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]
+  projj run <task> [--all] [--filter <selector>] [-- ...args]
+  projj start [--dry-run] [-- ...args]
   projj shell-init <zsh|bash|fish>
 `;
 
@@ -69,6 +79,86 @@ export function createCli(deps: CliDeps) {
   const colors = createColorTheme(
     deps.color ?? shouldUseColor(env, process.stdout.isTTY),
   );
+
+  async function runTaskLifecycle(
+    task: string,
+    args: string[],
+    runCwd: string,
+    config: ProjjConfig,
+    dryRun: boolean,
+    dryRunHeading: string,
+    notFoundMessage?: string,
+    repo?: Repo,
+    printCommand = false,
+  ): Promise<number> {
+    const taskCommand =
+      task === "start"
+        ? await resolveStartCommand(args, runCwd, config.tasks)
+        : await resolveTaskCommand(task, args, config.tasks, runCwd);
+    if (!taskCommand) {
+      output.stderr(
+        notFoundMessage ??
+          formatTaskNotFoundMessage(await explainTaskNotFound(task, runCwd, config.tasks)),
+      );
+      return 1;
+    }
+
+    if (dryRun) {
+      if (dryRunHeading) output.stdout(dryRunHeading);
+      output.stdout(`${colors.command(`$ ${taskCommand}`)}\n`);
+      return 0;
+    }
+
+    if (printCommand) output.stdout(`${colors.command(`$ ${taskCommand}`)}\n`);
+
+    const currentRepo = repo ?? currentRepoFromBaseDirs(config.base, runCwd)[0];
+    const repoInfo = currentRepo
+      ? repoInfoFromScannedRepo(currentRepo)
+      : repoInfoFromCurrentDirectory(runCwd);
+    const preEvent = hookEventForTask("pre", task);
+    const postEvent = hookEventForTask("post", task);
+
+    if (preEvent) {
+      const preHook = await runHooks({
+        event: preEvent,
+        hooks: config.hooks,
+        repo: repoInfo,
+        repoPath: runCwd,
+        globalTasks: config.tasks,
+        output,
+        runShellCommand,
+      });
+      if (preHook.code !== 0) return preHook.code;
+    }
+
+    const taskCode = await runShellCommand(taskCommand, runCwd);
+    if (taskCode !== 0) return taskCode;
+
+    if (!postEvent) return 0;
+    const postHook = await runHooks({
+      event: postEvent,
+      hooks: config.hooks,
+      repo: repoInfo,
+      repoPath: runCwd,
+      globalTasks: config.tasks,
+      output,
+      runShellCommand,
+    });
+    return postHook.code;
+  }
+
+  async function runRawCommandInRepo(
+    commandInput: string,
+    args: string[],
+    repo: Repo,
+    config: ProjjConfig,
+    dryRun: boolean,
+  ): Promise<number> {
+    const runCommand = await resolveRunCommand(commandInput, args, config.tasks, repo.path);
+    output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
+    if (dryRun) return 0;
+    return runShellCommand(runCommand, repo.path);
+  }
 
   return {
     async run(argv: string[]): Promise<number> {
@@ -94,13 +184,14 @@ export function createCli(deps: CliDeps) {
               args: rest,
               options: {
                 base: { type: "string" },
+                "dry-run": { type: "boolean", default: false },
                 "no-cd": { type: "boolean", default: false },
               },
               allowPositionals: true,
             });
 
             if (parsed.positionals.length !== 1) {
-              output.stderr("Usage: projj clone <repo> [--base <path>] [--no-cd]\n");
+              output.stderr("Usage: projj clone <repo> [--base <path>] [--no-cd] [--dry-run]\n");
               return 1;
             }
             const repoInput = parsed.positionals[0]!;
@@ -118,6 +209,16 @@ export function createCli(deps: CliDeps) {
 
             const repo = parseRepoInput(repoInput, config.platform);
             const targetPath = targetPathForRepo(base, repo);
+
+            if (parsed.values["dry-run"]) {
+              if (await pathExists(targetPath)) {
+                output.stdout(`Would skip existing ${targetPath}\n`);
+              } else {
+                output.stdout(`Would clone ${repo.cloneUrl}\n`);
+                output.stdout(`to ${targetPath}\n`);
+              }
+              return 0;
+            }
 
             let cloned = false;
             if (await pathExists(targetPath)) {
@@ -354,26 +455,25 @@ export function createCli(deps: CliDeps) {
                 : undefined;
 
             if (parsed.positionals.length === 0 && !forcedRawCommand) {
-              output.stderr("Usage: projj run <command-or-task> [--all] [--filter <selector>] [-- ...args]\n");
+              output.stderr("Usage: projj run <task> [--all] [--filter <selector>] [-- ...args]\n");
+              output.stderr("Use `projj run -- git status` for raw shell commands.\n");
               return 1;
             }
 
-            const config = await loadConfig(configPath, home);
-            const [first, ...remaining] = parsed.positionals;
+            if (parsed.positionals.length > 1) {
+              output.stderr("Usage: projj run <task> [--all] [--filter <selector>] [-- ...args]\n");
+              output.stderr("Use `projj run -- git status` for raw shell commands.\n");
+              return 1;
+            }
+
+            const [first] = parsed.positionals;
             const commandOrTask = first;
-            const isGlobalTask =
-              commandOrTask !== undefined &&
-              Object.prototype.hasOwnProperty.call(config.tasks, commandOrTask);
-            const commandInput =
-              forcedRawCommand ??
-              (isGlobalTask || remaining.length === 0
-                ? commandOrTask!
-                : [commandOrTask!, ...remaining].join(" "));
-            const appendedArgs = forcedRawCommand
-              ? []
-              : isGlobalTask
-                ? [...remaining, ...extraArgs]
-                : extraArgs;
+            const commandInput = forcedRawCommand ?? commandOrTask!;
+            const appendedArgs = forcedRawCommand ? [] : extraArgs;
+            const config =
+              !forcedRawCommand && commandInput === "start"
+                ? await loadConfigOrDefault(configPath, home)
+                : await loadConfig(configPath, home);
 
             const filter =
               typeof parsed.values.filter === "string" ? parsed.values.filter : undefined;
@@ -393,12 +493,18 @@ export function createCli(deps: CliDeps) {
                 }
               }
 
-              const runCommand = await resolveRunCommand(
-                commandInput,
-                appendedArgs,
-                config.tasks,
-                cwd,
-              );
+              if (!forcedRawCommand) {
+                return runTaskLifecycle(
+                  commandInput,
+                  appendedArgs,
+                  cwd,
+                  config,
+                  parsed.values["dry-run"],
+                  `Would run in current directory: ${commandInput}\n`,
+                );
+              }
+
+              const runCommand = await resolveRunCommand(commandInput, appendedArgs, config.tasks, cwd);
               if (parsed.values["dry-run"]) {
                 output.stdout(`Would run in current directory: ${commandInput}\n`);
                 output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
@@ -436,16 +542,26 @@ export function createCli(deps: CliDeps) {
             output.stdout(`${action} in ${repos.length} repositories: ${commandInput}\n`);
             for (const repo of repos) {
               try {
-                const runCommand = await resolveRunCommand(
-                  commandInput,
-                  appendedArgs,
-                  config.tasks,
-                  repo.path,
-                );
                 output.stdout(`${colors.repoHeader(`==> ${repo.key}`)}\n`);
-                output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
-                if (parsed.values["dry-run"]) continue;
-                const code = await runShellCommand(runCommand, repo.path);
+                const code = forcedRawCommand
+                  ? await runRawCommandInRepo(
+                      commandInput,
+                      appendedArgs,
+                      repo,
+                      config,
+                      parsed.values["dry-run"],
+                    )
+                  : await runTaskLifecycle(
+                      commandInput,
+                      appendedArgs,
+                      repo.path,
+                      config,
+                      parsed.values["dry-run"],
+                      "",
+                      `${repo.key}: Task not found: ${commandInput}\n`,
+                      repo,
+                      true,
+                    );
                 if (code !== 0) {
                   exitCode = code;
                   failures.push({ key: repo.key, code });
@@ -468,6 +584,29 @@ export function createCli(deps: CliDeps) {
 
             return exitCode;
           }
+          case "start": {
+            const separatorIndex = rest.indexOf("--");
+            const commandArgs = separatorIndex === -1 ? rest : rest.slice(0, separatorIndex);
+            const extraArgs = separatorIndex === -1 ? [] : rest.slice(separatorIndex + 1);
+            const parsed = parseArgs({
+              args: commandArgs,
+              options: {
+                "dry-run": { type: "boolean", default: false },
+              },
+              allowPositionals: false,
+            });
+
+            const config = await loadConfigOrDefault(configPath, home);
+            return runTaskLifecycle(
+              "start",
+              extraArgs,
+              cwd,
+              config,
+              parsed.values["dry-run"],
+              "Would start current project\n",
+              "No start command found in current directory.\n",
+            );
+          }
           default:
             output.stderr(`unknown command: ${command}\n`);
             return 1;
@@ -482,6 +621,88 @@ export function createCli(deps: CliDeps) {
 
 function isSupportedShell(value: string): value is SupportedShell {
   return value === "zsh" || value === "bash" || value === "fish";
+}
+
+function hookEventForTask(prefix: "pre" | "post", task: string): `pre_${string}` | `post_${string}` | undefined {
+  return /^[A-Za-z0-9_.-]+$/.test(task) ? `${prefix}_${task}` : undefined;
+}
+
+function formatTaskNotFoundMessage(hint: TaskNotFoundHint): string {
+  const lines = [`Task not found: ${hint.task}`];
+  lines.push(formatTaskNotFoundHint(hint));
+  return `${lines.join("\n")}\n`;
+}
+
+function formatTaskNotFoundHint(hint: TaskNotFoundHint): string {
+  const displayProviders = hint.detectedProviders.filter((provider) => provider !== "global");
+  const rawSuggestion = `run a raw command with \`projj run -- ${hint.task}\``;
+
+  if (displayProviders.length === 0) {
+    return `Define ${hint.task} in .projj.toml [tasks], add a supported project task file, or ${rawSuggestion}.`;
+  }
+
+  if (displayProviders.length === 1) {
+    return `Detected ${formatProviderList(displayProviders)}. ${capitalize(taskProviderSuggestion(hint.task, displayProviders[0]!))} or ${rawSuggestion}.`;
+  }
+
+  return `Detected ${formatProviderList(displayProviders)}. Add ${hint.task} to the matching project task config or ${rawSuggestion}.`;
+}
+
+function taskProviderSuggestion(task: string, provider: TaskProviderKind): string {
+  switch (provider) {
+    case "package":
+      return `add scripts.${task} to package.json`;
+    case "make":
+      return `add a ${task} target to Makefile`;
+    case "just":
+      return `add a ${task} recipe to justfile`;
+    case "taskfile":
+      return `add a ${task} task to Taskfile`;
+    case "local":
+    case "cargo":
+    case "go":
+    case "global":
+      return `define ${task} in .projj.toml [tasks]`;
+  }
+}
+
+function formatProviderList(providers: TaskProviderKind[]): string {
+  return joinSentence(providers.map(providerLabel));
+}
+
+function providerLabel(provider: TaskProviderKind): string {
+  switch (provider) {
+    case "local":
+      return ".projj.toml";
+    case "package":
+      return "package.json";
+    case "make":
+      return "Makefile";
+    case "just":
+      return "justfile";
+    case "taskfile":
+      return "Taskfile";
+    case "cargo":
+      return "Cargo.toml";
+    case "go":
+      return "go.mod";
+    case "global":
+      return "global config";
+  }
+}
+
+function joinSentence(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} or ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+function capitalize(value: string): string {
+  return value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function expandCliPath(value: string, home: string, cwd: string): string {
@@ -499,6 +720,37 @@ function repoInfoFromScannedRepo(repo: Repo): RepoInfo {
     cloneUrl: `git@${repo.host}:${repo.owner}/${repo.name}.git`,
     relPath: repo.key,
   };
+}
+
+function repoInfoFromCurrentDirectory(cwd: string): RepoInfo {
+  const name = basename(resolve(cwd)) || "current";
+  return {
+    host: "local",
+    owner: "current",
+    repo: name,
+    cloneUrl: "",
+    relPath: `local/current/${name}`,
+  };
+}
+
+async function loadConfigOrDefault(configPath: string, home: string): Promise<ProjjConfig> {
+  try {
+    return await loadConfig(configPath, home);
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      const fallback = defaultConfig();
+      return {
+        ...fallback,
+        base: fallback.base.map((path) => expandCliPath(path, home, dirnameForConfig(configPath))),
+      };
+    }
+    throw error;
+  }
+}
+
+function dirnameForConfig(path: string): string {
+  const lastSlash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return lastSlash === -1 ? "." : path.slice(0, lastSlash);
 }
 
 function currentRepoFromBaseDirs(baseDirs: string[], cwd: string): Repo[] {

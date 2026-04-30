@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatTaskList, listRunTasks, resolveRunCommand } from "../src/tasks";
+import { formatTaskList, listRunTasks, resolveRunCommand, resolveStartCommand } from "../src/tasks";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "projj-tasks-"));
@@ -39,6 +39,15 @@ describe("tasks", () => {
     await expect(
       resolveRunCommand("status", [], { status: "git status --short" }, cwd),
     ).resolves.toBe("git status --short");
+  });
+
+  test("global explicit task takes precedence over language intent fallback", async () => {
+    const cwd = await tempDir();
+    await writeFile(cwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
+
+    await expect(resolveRunCommand("test", [], { test: "cargo nextest run" }, cwd)).resolves.toBe(
+      "cargo nextest run",
+    );
   });
 
   test("falls back to raw command when no task matches", async () => {
@@ -108,6 +117,62 @@ describe("tasks", () => {
 
       await expect(resolveRunCommand("test", [], {}, cwd)).resolves.toBe(command);
     }
+  });
+
+  test("resolves start command from local task before package scripts", async () => {
+    const cwd = await tempDir();
+    await writeFile(cwd + "/.projj.toml", '[tasks]\nstart = "pnpm dev"\n');
+    await writeFile(cwd + "/package.json", JSON.stringify({ scripts: { dev: "vite" } }));
+
+    await expect(resolveStartCommand([], cwd)).resolves.toBe("pnpm dev");
+  });
+
+  test("resolves package start candidates in priority order", async () => {
+    const devCwd = await tempDir();
+    await writeFile(
+      devCwd + "/package.json",
+      JSON.stringify({ scripts: { start: "vite --host", dev: "vite" } }),
+    );
+    await touch(devCwd + "/pnpm-lock.yaml");
+    await expect(resolveStartCommand(["--host", "0.0.0.0"], devCwd)).resolves.toBe(
+      "pnpm run start -- --host 0.0.0.0",
+    );
+
+    const startCwd = await tempDir();
+    await writeFile(startCwd + "/package.json", JSON.stringify({ scripts: { start: "node ." } }));
+    await expect(resolveStartCommand([], startCwd)).resolves.toBe("npm run start");
+
+    const serveCwd = await tempDir();
+    await writeFile(serveCwd + "/package.json", JSON.stringify({ scripts: { serve: "vite" } }));
+    await expect(resolveStartCommand([], serveCwd)).resolves.toBe("npm run serve");
+  });
+
+  test("resolves task runner and language start fallbacks", async () => {
+    const makeCwd = await tempDir();
+    await writeFile(makeCwd + "/Makefile", "serve:\n\t@echo serve\n");
+    await expect(resolveStartCommand([], makeCwd)).resolves.toBe("make serve");
+
+    const justCwd = await tempDir();
+    await writeFile(justCwd + "/justfile", "run:\n  echo run\n");
+    await expect(resolveStartCommand([], justCwd)).resolves.toBe("just run");
+
+    const taskCwd = await tempDir();
+    await writeFile(taskCwd + "/Taskfile.yml", "tasks:\n  dev:\n    cmds:\n      - echo dev\n");
+    await expect(resolveStartCommand([], taskCwd)).resolves.toBe("task dev");
+
+    const cargoCwd = await tempDir();
+    await writeFile(cargoCwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
+    await expect(resolveStartCommand([], cargoCwd)).resolves.toBe("cargo run");
+
+    const goCwd = await tempDir();
+    await writeFile(goCwd + "/go.mod", "module example.com/demo\n");
+    await expect(resolveStartCommand([], goCwd)).resolves.toBe("go run .");
+  });
+
+  test("returns undefined when no start command is found", async () => {
+    const cwd = await tempDir();
+
+    await expect(resolveStartCommand([], cwd)).resolves.toBeUndefined();
   });
 
   test("rejects invalid local task files", async () => {

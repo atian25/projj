@@ -19,6 +19,21 @@ type ResolvedCommand = {
   appendSeparator?: boolean;
 };
 
+export type TaskProviderKind =
+  | "local"
+  | "package"
+  | "make"
+  | "just"
+  | "taskfile"
+  | "cargo"
+  | "go"
+  | "global";
+
+export type TaskNotFoundHint = {
+  task: string;
+  detectedProviders: TaskProviderKind[];
+};
+
 const CARGO_TASKS: TaskMap = {
   test: "cargo test",
   build: "cargo build",
@@ -38,18 +53,59 @@ const GO_TASKS: TaskMap = {
   vet: "go vet ./...",
 };
 
+const PACKAGE_INTENT_FALLBACKS: Record<string, string[]> = {
+  start: ["dev", "serve"],
+};
+
+const TASK_RUNNER_INTENT_FALLBACKS: Record<string, string[]> = {
+  start: ["dev", "serve", "run"],
+};
+
+const MAPPED_FILE_INTENT_FALLBACKS: Record<string, string> = {
+  start: "run",
+};
+
 export async function resolveRunCommand(
   commandOrTask: string,
   args: string[],
   globalTasks: TaskMap,
   cwd: string,
 ): Promise<string> {
-  const resolved =
-    (await resolveLocalTask(commandOrTask, cwd)) ??
-    (globalTasks[commandOrTask] ? { command: globalTasks[commandOrTask] } : undefined) ??
-    { command: commandOrTask };
+  const resolved = (await resolveTask(commandOrTask, cwd, globalTasks)) ?? {
+    command: commandOrTask,
+  };
 
   return appendArgs(resolved, args);
+}
+
+export async function resolveTaskCommand(
+  task: string,
+  args: string[],
+  globalTasks: TaskMap,
+  cwd: string,
+): Promise<string | undefined> {
+  const resolved = await resolveTask(task, cwd, globalTasks);
+  return resolved ? appendArgs(resolved, args) : undefined;
+}
+
+export async function resolveStartCommand(
+  args: string[],
+  cwd: string,
+  globalTasks: TaskMap = {},
+): Promise<string | undefined> {
+  const resolved = await resolveTask("start", cwd, globalTasks);
+  return resolved ? appendArgs(resolved, args) : undefined;
+}
+
+export async function explainTaskNotFound(
+  task: string,
+  cwd: string,
+  globalTasks: TaskMap = {},
+): Promise<TaskNotFoundHint> {
+  return {
+    task,
+    detectedProviders: await detectTaskProviders(cwd, globalTasks),
+  };
 }
 
 export async function listRunTasks(
@@ -93,16 +149,63 @@ function appendArgs(resolved: ResolvedCommand, args: string[]): string {
   return `${resolved.command}${separator} ${args.map(shellQuote).join(" ")}`;
 }
 
-async function resolveLocalTask(task: string, cwd: string): Promise<ResolvedCommand | undefined> {
+async function resolveTask(
+  task: string,
+  cwd: string,
+  globalTasks: TaskMap,
+): Promise<ResolvedCommand | undefined> {
+  return (await resolveExplicitTask(task, cwd, globalTasks)) ?? resolveIntentFallback(task, cwd);
+}
+
+async function resolveExplicitTask(
+  task: string,
+  cwd: string,
+  globalTasks: TaskMap,
+): Promise<ResolvedCommand | undefined> {
   return (
     (await resolveProjjTask(task, cwd)) ??
     (await resolvePackageScript(task, cwd)) ??
     (await resolveMakeTask(task, cwd)) ??
     (await resolveJustTask(task, cwd)) ??
     (await resolveTaskfileTask(task, cwd)) ??
-    (await resolveMappedFileTask(task, cwd, "Cargo.toml", CARGO_TASKS)) ??
-    (await resolveMappedFileTask(task, cwd, "go.mod", GO_TASKS))
+    (globalTasks[task] ? { command: globalTasks[task] } : undefined)
   );
+}
+
+async function resolveIntentFallback(
+  task: string,
+  cwd: string,
+): Promise<ResolvedCommand | undefined> {
+  return (
+    (await resolveFirstTask(PACKAGE_INTENT_FALLBACKS[task] ?? [], cwd, resolvePackageScript)) ??
+    (await resolveFirstTask(TASK_RUNNER_INTENT_FALLBACKS[task] ?? [], cwd, resolveMakeTask)) ??
+    (await resolveFirstTask(TASK_RUNNER_INTENT_FALLBACKS[task] ?? [], cwd, resolveJustTask)) ??
+    (await resolveFirstTask(TASK_RUNNER_INTENT_FALLBACKS[task] ?? [], cwd, resolveTaskfileTask)) ??
+    (await resolveMappedFileTask(
+      MAPPED_FILE_INTENT_FALLBACKS[task] ?? task,
+      cwd,
+      "Cargo.toml",
+      CARGO_TASKS,
+    )) ??
+    (await resolveMappedFileTask(
+      MAPPED_FILE_INTENT_FALLBACKS[task] ?? task,
+      cwd,
+      "go.mod",
+      GO_TASKS,
+    ))
+  );
+}
+
+async function resolveFirstTask(
+  tasks: string[],
+  cwd: string,
+  resolver: (task: string, cwd: string) => Promise<ResolvedCommand | undefined>,
+): Promise<ResolvedCommand | undefined> {
+  for (const task of tasks) {
+    const resolved = await resolver(task, cwd);
+    if (resolved) return resolved;
+  }
+  return undefined;
 }
 
 async function listProjjTasks(cwd: string): Promise<TaskListGroup[]> {
@@ -243,6 +346,22 @@ async function listDetectedTasks(cwd: string): Promise<TaskListGroup[]> {
   ].sort(byTaskName);
 
   return taskListGroup("detected", tasks);
+}
+
+async function detectTaskProviders(
+  cwd: string,
+  globalTasks: TaskMap,
+): Promise<TaskProviderKind[]> {
+  const providers: TaskProviderKind[] = [];
+  if ((await readOptionalFile(join(cwd, ".projj.toml"))) !== undefined) providers.push("local");
+  if ((await readOptionalFile(join(cwd, "package.json"))) !== undefined) providers.push("package");
+  if (await firstExisting(cwd, ["Makefile", "makefile"])) providers.push("make");
+  if (await firstExisting(cwd, ["justfile", "Justfile"])) providers.push("just");
+  if (await firstExisting(cwd, ["Taskfile.yml", "Taskfile.yaml"])) providers.push("taskfile");
+  if (await exists(join(cwd, "Cargo.toml"))) providers.push("cargo");
+  if (await exists(join(cwd, "go.mod"))) providers.push("go");
+  if (Object.keys(globalTasks).length > 0) providers.push("global");
+  return providers;
 }
 
 async function listSimpleTargetTasks(

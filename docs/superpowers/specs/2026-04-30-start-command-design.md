@@ -1,190 +1,226 @@
-# start 命令设计
+# run 任务解析、lifecycle 与 start intent 设计
 
 日期：2026-04-30
 
-## 背景
+## 结论
 
-`projj` 已经能管理本地仓库目录、跳转仓库、批量运行任务，并且 `projj run` 已支持从项目文件中解析任务：
+这轮设计最终收敛为：
+
+- `projj run <task>` 是唯一核心执行模型。
+- `projj start` 是当前目录里的 `projj run start` 短入口。
+- `start`、`test`、`build`、`install`、`clean`、`stop` 等都应被理解为 task name，其中一部分 task name 可以拥有 provider-aware intent fallback。
+- `projj start` 不复制 `run` 的调度能力；批量启动使用 `projj run start --filter/--all`。
+- lifecycle 属于 `run <task>` 的前后包裹，即 `pre_<task>` / `post_<task>`，不是独立命令系统。
+- raw command 必须显式使用 `projj run -- <command>`，不参与 task resolution，也不触发 lifecycle hooks。
+- 默认配置不再内置 `status`、`pull`、`fetch`；用户需要时显式配置。
+- 找不到 task 时应基于已检测到的 provider 给出下一步提示。
+
+## 设计修正
+
+早期分支里的 `start` 方案偏向“新增一个 start 命令，并在里面做生命周期和兜底”。这会带来两个问题：
+
+- `projj start` 和 `projj run start` 的关系不清楚。
+- `start`、`install`、`clean`、`stop` 以后都可能各自长出一套重复的解析逻辑。
+
+讨论后修正为：`run` 负责解析和执行 task，短入口只负责转发到 `run <intent>`。因此 `start` 的兜底不应该是一个独立 subsystem，而应是 `run start` 在 provider 层的 intent fallback。
+
+## 核心模型
+
+`projj run <task>` 的解析分两层。这里的“显式”和“兜底”都发生在 provider 内部；顶层模型只负责按 provider 顺序询问。
+
+第一层是 provider explicit lookup：每个 provider 在自己的原生配置里找名字等于 `<task>` 的入口。
 
 ```text
-package.json scripts
-Makefile
-justfile / Justfile
-Taskfile.yml / Taskfile.yaml
-Cargo.toml
-go.mod
+.projj.toml provider      -> [tasks].<task>
+package provider          -> package.json scripts.<task>
+make / just / taskfile    -> target / recipe / task named <task>
+global config provider    -> [tasks].<task>
 ```
 
-这让 `projj run test` 这类命令可以在不同语言或工具链项目中展开成不同命令。但用户进入一个仓库后，还有一个更直接的日常动作：启动当前项目。
+第二层是 intent fallback：
 
-`projj` 当前默认 tasks 已经包含 `pull` 和 `fetch`，因此 `up` 在这里容易被理解为“更新仓库”。本功能选择 `projj start`，语义聚焦在启动当前项目。
+```text
+如果 <task> 是已知 intent，各 provider 可以按生态惯例推导命令。
+```
 
-`projj start` 不引入第二套任务系统。它是 `projj run` 任务解析体系上的启动意图解析器：用户没有明确说要运行哪个任务名，只表达了“我要启动这个项目”，`projj` 帮用户在当前项目里选择最合适的启动入口。
+伪代码：
 
-## 目标
+```text
+for provider in providers:
+  command = provider.resolveExplicitTask(task)
+  if command:
+    return command
 
-新增 `projj start`，让用户在项目目录中一键启动当前项目。
+for provider in providers:
+  command = provider.resolveIntentFallback(task)
+  if command:
+    return command
 
-设计目标：
+return not found
+```
 
-- 默认零配置可用。
-- 显式项目任务优先于自动探测。
-- 复用现有项目任务解析基础，按生态或工具链维护启动候选和语言默认兜底。
-- 支持 `--dry-run` 预览将执行的命令。
-- 支持 `--` 后参数追加到最终启动命令。
-- 第一版只启动当前目录项目，不做批量启动。
+显式 task 永远优先于 fallback。例如全局 `[tasks].test` 应优先于 Cargo 项目的 `cargo test` fallback。
 
-## 本次不做
+## Provider
 
-- 不实现 `projj setup`、`projj stop`、`projj down`。
-- 不自动安装依赖、运行迁移或启动外部服务。
-- 不做端口探测、浏览器打开、健康检查或后台 daemon 管理。
-- 不做多仓库批量启动。
-- 不为 Python、Ruby、Java、Docker Compose 等生态猜测启动命令；这些后续可以通过探测器扩展。
+Provider 通过项目文件判断自己是否适用于当前目录，并负责解析显式 task 或 intent fallback。
 
-## 命令
+当前实现的 provider：
+
+```text
+projj local config
+  file: .projj.toml
+  explicit: [tasks].<task>
+  fallback: none
+
+package
+  file: package.json
+  explicit: scripts.<task>
+  fallback: per intent
+
+make
+  file: Makefile / makefile
+  explicit: target <task>
+  fallback: per intent
+
+just
+  file: justfile / Justfile
+  explicit: recipe <task>
+  fallback: per intent
+
+taskfile
+  file: Taskfile.yml / Taskfile.yaml
+  explicit: task <task>
+  fallback: per intent
+
+cargo
+  file: Cargo.toml
+  explicit: none
+  fallback: per intent
+
+go
+  file: go.mod
+  explicit: none
+  fallback: per intent
+
+global config
+  file: ~/.projj/config.toml
+  explicit: [tasks].<task>
+  fallback: none
+```
+
+Cargo 和 Go 当前没有“原生命名 task”查找，只提供已知 intent fallback。
+
+## Intent Fallback
+
+当前已实现的 fallback：
+
+```text
+start
+  package.json scripts.dev / scripts.serve
+  Makefile / justfile / Taskfile 的 dev / serve / run
+  Cargo.toml -> cargo run
+  go.mod -> go run .
+
+cargo/go common tasks
+  Cargo.toml -> cargo test/build/check/run/bench/doc/fmt/clippy
+  go.mod     -> go test/build/run/fmt/vet
+```
+
+未来可以扩展更多 intent，但每个 intent 应继续挂在 provider 模型上，而不是新增独立命令解析系统。
+
+## Raw Command
+
+`projj run <task>` 只接受一个 task name。找不到 task 时返回失败，不再自动把未知 task 当 raw shell command。
+
+raw command 必须显式使用 `--`：
+
+```sh
+projj run -- git status
+projj run --filter 'atian25/*' -- git status
+```
+
+raw command 不解析 task，也不自动运行 `pre_<task>` / `post_<task>` hooks。
+
+## Not Found Hint
+
+找不到 task 时，错误输出应告诉用户下一步怎么做。
+
+如果检测到单一强 provider，例如 `package.json`：
+
+```text
+Task not found: ux
+Detected package.json. Add scripts.ux to package.json or run a raw command with `projj run -- ux`.
+```
+
+如果检测到多个项目 provider：
+
+```text
+Task not found: ux
+Detected package.json or Makefile. Add ux to the matching project task config or run a raw command with `projj run -- ux`.
+```
+
+如果没有检测到项目 provider：
+
+```text
+Task not found: ux
+Define ux in .projj.toml [tasks], add a supported project task file, or run a raw command with `projj run -- ux`.
+```
+
+`global config` 不作为 detected provider 展示，因为它不是当前项目的原生 task 入口。
+
+## start Intent
+
+`start` 是第一版完整落地的 intent。
+
+当前目录：
 
 ```sh
 projj start
 projj start --dry-run
 projj start -- --host 0.0.0.0
+projj run start
 ```
 
-`projj start` 只在当前工作目录解析和执行启动命令。它不读取全局 `[tasks]`，因为启动项目是项目局部行为，不应该被全局通用 task 意外覆盖。
+批量或筛选：
 
-如果没有找到启动命令，返回 1 并输出：
+```sh
+projj run start --filter 'atian25/*'
+projj run start --all --dry-run
+```
+
+不支持 `projj start --filter/--all`。短入口只面向当前目录；调度能力属于 `run`。
+
+`start` 解析顺序：
+
+```text
+1. explicit task lookup: start
+   - .projj.toml [tasks].start
+   - package.json scripts.start
+   - Makefile / justfile / Taskfile 的 start
+   - ~/.projj/config.toml [tasks].start
+
+2. start fallback
+   - package.json scripts.dev / scripts.serve
+   - Makefile / justfile / Taskfile 的 dev / serve / run
+   - Cargo.toml -> cargo run
+   - go.mod -> go run .
+```
+
+`projj start` 可以保留当前目录语义的友好错误：
 
 ```text
 No start command found in current directory.
 ```
 
-## 配置
-
-`projj start` 复用现有 `.projj.toml [tasks]`，不新增 `[start]` 配置。
-
-```toml
-[tasks]
-start = "pnpm dev"
-```
-
-`[tasks].start` 是当前项目的显式启动任务，优先级最高。这样 `projj start` 和 `projj run start` 在项目显式定义时会解析到同一个命令。
-
-如果 `.projj.toml` 存在但 `[tasks].start` 不是字符串，沿用现有本地 task 配置错误：
-
-```text
-invalid local task config: tasks.start must be a string
-```
-
-第一版不新增 `commands` 数组、平台覆盖、环境变量注入或工作目录覆盖。
-
-## 解析优先级
-
-`projj start` 的解析顺序：
-
-```text
-1. .projj.toml [tasks].start
-2. JavaScript/TypeScript detector
-3. task runner detectors
-4. Rust detector
-5. Go detector
-```
-
-这些 detector 应该按生态或工具链分组维护，而不是在 CLI 分支里散落硬编码。推荐提供独立 API：
-
-```ts
-resolveStartTaskCommand(cwd: string): Promise<ResolvedCommand | undefined>
-```
-
-`ResolvedCommand` 复用现有任务解析的概念，至少包含：
-
-```ts
-type ResolvedCommand = {
-  command: string;
-  appendSeparator?: boolean;
-};
-```
-
-## Detector 规则
-
-### JavaScript/TypeScript
-
-如果当前目录存在 `package.json`，按 scripts 优先级查找：
-
-```text
-dev
-start
-serve
-```
-
-命中后执行：
-
-```text
-<package-manager> run <script>
-```
-
-包管理器检测复用现有逻辑：
-
-```text
-bun.lock / bun.lockb -> bun
-pnpm-lock.yaml       -> pnpm
-yarn.lock            -> yarn
-其他 package.json     -> npm
-```
-
-`package.json` 非法时，`projj start` 失败并输出解析错误。`package.json` 合法但没有候选 script 时，继续尝试后续 detector。
-
-### Task Runners
-
-按现有顺序检测：
-
-```text
-Makefile / makefile
-justfile / Justfile
-Taskfile.yml / Taskfile.yaml
-```
-
-每类 task runner 按候选名查找：
-
-```text
-dev
-start
-serve
-run
-```
-
-命中后分别执行：
-
-```text
-make <target>
-just <recipe>
-task <task>
-```
-
-Taskfile 结构非法时失败。Makefile 和 justfile 中目标不存在时继续尝试后续 detector。
-
-### Rust
-
-如果当前目录存在 `Cargo.toml`，执行：
-
-```text
-cargo run
-```
-
-### Go
-
-如果当前目录存在 `go.mod`，执行：
-
-```text
-go run .
-```
+`projj run start` 则使用通用 task-not-found 提示。
 
 ## 参数追加
 
-`--` 后的参数追加到最终命令。
-
-示例：
+`--` 后的参数追加到最终解析出的命令。
 
 ```sh
+projj run start -- --host 0.0.0.0
 projj start -- --host 0.0.0.0
 ```
 
@@ -194,81 +230,106 @@ projj start -- --host 0.0.0.0
 pnpm run dev -- --host 0.0.0.0
 ```
 
-如果命中 raw command style 的配置：
+如果命中直接配置的命令：
 
 ```text
 pnpm dev --host 0.0.0.0
 ```
 
-参数 quoting 复用现有 `shellQuote` 和 `appendArgs` 行为。
+## Lifecycle Hooks
+
+`projj run <task>` 正常执行时自动包裹：
+
+```text
+pre_<task> hooks
+resolved task command
+post_<task> hooks
+```
+
+示例：
+
+```toml
+[[hooks]]
+event = "pre_test"
+tasks = ["echo preparing"]
+
+[[hooks]]
+event = "post_test"
+tasks = ["echo done"]
+```
+
+执行语义：
+
+- `pre_<task>` 失败：不执行主命令，不执行 `post_<task>`，返回失败码。
+- 主命令失败：不执行 `post_<task>`，返回主命令失败码。
+- `post_<task>` 失败：返回 `post_<task>` 的失败码。
+- raw command 不触发 lifecycle hooks。
+
+`post_clone` 仍是 clone 专用 hook event；`pre_clone` 不属于本轮 lifecycle 泛化范围。
 
 ## Dry Run
 
-`--dry-run` 只打印解析结果，不执行命令：
+`run` / `start` 的 dry-run 只预览主命令，不执行 hooks：
+
+```text
+Would run in current directory: start
+$ pnpm run dev
+```
+
+`projj start` 使用更贴近日常命令的文案：
 
 ```text
 Would start current project
 $ pnpm run dev
 ```
 
-如果追加参数：
+后续如果要展示完整执行链，可以再设计：
 
 ```text
-Would start current project
-$ pnpm run dev -- --host 0.0.0.0
+pre_start -> start -> post_start
 ```
 
-## 与 `projj run` 的关系
+## clone Dry Run
 
-`projj start` 是 `projj run` 体系上的启动意图快捷入口，但不是 `projj run start` 的纯别名。
+这轮讨论中顺手补了 `clone --dry-run`。它属于 clone 命令能力，不属于 `run` 模型。
 
-关系：
+```sh
+projj clone atian25/ppt-test --dry-run
+```
 
-- `projj run <name>` 运行用户明确指定的任务名。
-- `projj run start` 只解析名为 `start` 的任务，然后按现有规则回退到全局 task 或 raw command。
-- `projj start` 表达“启动当前项目”的意图。它先尝试项目本地 `start` 任务，再尝试常见启动候选和语言默认兜底。
-- `projj start` 不读取全局 tasks，也不回退到 raw command。
-
-实现上应复用 `tasks.ts` 中的文件解析、包管理器检测、目标检测和参数追加逻辑，但保留独立入口。
-
-## CLI 集成
-
-`projj --help` 增加：
+新目标：
 
 ```text
-projj start [--dry-run] [-- ...args]
+Would clone git@github.com:atian25/ppt-test.git
+to ~/projj/github.com/atian25/ppt-test
 ```
 
-`cli.ts` 新增 `start` 分支：
+目标已存在：
 
-1. 用 `parseArgs` 解析 `--dry-run`。
-2. 通过 `--` 分离追加参数。
-3. 调用 `resolveStartTaskCommand(cwd)`。
-4. 未命中时输出错误并返回 1。
-5. dry-run 时打印命令并返回 0。
-6. 用追加参数生成最终命令字符串。
-7. 正常模式调用 `runShellCommand(command, cwd)`。
+```text
+Would skip existing ~/projj/github.com/atian25/ppt-test
+```
 
-`CliDeps` 不需要新增执行依赖，沿用已有 `runShellCommand` 注入点。
+dry-run 不 clone、不执行 `post_clone` hooks、不写 cd finalizer。
 
-## 测试
+## 当前验收重点
 
-新增或扩展测试覆盖：
+需要覆盖这些主流程：
 
-- `.projj.toml [tasks].start` 优先于 package script。
-- `package.json scripts.dev` 解析为对应包管理器命令。
-- `scripts.start` 和 `scripts.serve` 在 `dev` 不存在时作为 fallback。
-- Makefile、justfile、Taskfile 的 `dev/start/serve/run` 候选能解析。
-- Cargo 项目解析为 `cargo run`。
-- Go 项目解析为 `go run .`。
-- `--dry-run` 打印命令且不执行。
-- `--` 后参数正确追加，package script 使用额外 `--`。
-- 找不到启动命令时返回 1。
-- 非法 `.projj.toml [tasks]` 配置、非法 `package.json`、非法 Taskfile 返回失败。
+- `projj run <task>` explicit lookup。
+- `projj run <task>` cargo/go fallback。
+- `projj run unknown` provider-aware hint。
+- `projj run -- <command>` raw command。
+- `projj start` 与当前目录 `projj run start` 等价。
+- `projj run start --filter/--all` 批量解析。
+- `pre_<task>` / `post_<task>` 生命周期。
+- raw command 不触发生命周期。
+- `post_clone` 仍按 clone 语义运行。
+- `projj clone --dry-run` 不产生副作用。
 
 ## 后续扩展
 
-后续可以在同一 detector 结构下扩展：
+可继续在 provider 结构下扩展更多生态：
 
 ```text
 Python
@@ -281,11 +342,24 @@ Java
   pom.xml / build.gradle / gradlew
 ```
 
-也可以新增独立生命周期命令：
+可继续扩展更多 intent：
 
-```sh
-projj setup
-projj stop
+```text
+install
+clean
+stop
+build
+test
 ```
 
-但这些不进入第一版。
+短入口命令仍应只是 `run <intent>` 的别名：
+
+```sh
+projj install  == projj run install
+projj clean    == projj run clean
+projj stop     == projj run stop
+```
+
+这类短入口默认只面向当前目录；批量能力继续使用 `projj run <intent> --filter/--all`。
+
+`post_start` readiness、端口探测、异步健康检查可以后续单独设计，不进入当前实现。

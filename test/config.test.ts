@@ -12,11 +12,7 @@ describe("config", () => {
     expect(defaultConfig()).toEqual({
       base: ["~/projj"],
       platform: "github.com",
-      tasks: {
-        status: "git status --short",
-        pull: "git pull --ff-only",
-        fetch: "git fetch --all --prune",
-      },
+      tasks: {},
       hooks: [],
     });
   });
@@ -44,7 +40,7 @@ describe("config", () => {
 
     expect(config.platform).toBe("github.com");
     expect(config.base).toEqual([join(root, "projj")]);
-    expect(config.tasks.status).toBe("git status --short");
+    expect(config.tasks).toEqual({});
   });
 
   test("save default config does not overwrite existing config", async () => {
@@ -114,6 +110,38 @@ describe("config", () => {
     ]);
   });
 
+  test("loads lifecycle hooks", async () => {
+    const dir = await Bun.$`mktemp -d`.text();
+    const root = dir.trim();
+    const configPath = join(root, ".projj", "config.toml");
+    await Bun.$`mkdir -p ${dirname(configPath)}`;
+    await Bun.write(
+      configPath,
+      [
+        "[[hooks]]",
+        'event = "pre_start"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_start"',
+        'tasks = ["announce"]',
+        "",
+        "[[hooks]]",
+        'event = "pre_test"',
+        'tasks = ["prepare-test"]',
+        "",
+      ].join("\n"),
+    );
+
+    const config = await loadConfig(configPath, root);
+
+    expect(config.hooks).toEqual([
+      { event: "pre_start", tasks: ["prepare"] },
+      { event: "post_start", tasks: ["announce"] },
+      { event: "pre_test", tasks: ["prepare-test"] },
+    ]);
+  });
+
   test("load config rejects invalid hooks", async () => {
     const cases: Array<{ name: string; toml: string; message: string }> = [
       {
@@ -124,7 +152,7 @@ describe("config", () => {
       {
         name: "unsupported event",
         toml: '[[hooks]]\nevent = "pre_clone"\ntasks = ["setup"]\n',
-        message: "invalid config: hooks[0].event must be post_clone",
+        message: "invalid config: hooks[0].event must be post_clone or pre_<task>/post_<task>",
       },
       {
         name: "empty tasks",
