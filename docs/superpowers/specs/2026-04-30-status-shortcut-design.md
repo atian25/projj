@@ -7,8 +7,8 @@
 这轮新增 `projj status` 作为当前目录短入口。它属于现有 `run` task 模型，不是新的仓库状态分析器。
 
 - `projj status` 等价于当前目录里的 `projj run status`。
-- `status` 不提供内置 fallback。
-- 如果用户没有定义 `status` task，命令返回找不到 task。
+- `status` 提供内置 fallback：`git status --short --branch`。
+- 如果用户定义了 `status` task，显式定义优先于内置 fallback。
 - 批量、筛选和 changed 过滤继续属于 `run`，例如 `projj run status --all`、`projj run status --filter egg`、`projj run status --changed`。
 - `projj status` 支持 `--dry-run` 和 `-- ...args`，不支持 `--all`、`--filter`、`--changed`。
 - lifecycle hooks 按 task name 触发，即 `pre_status` / `post_status`。
@@ -40,7 +40,7 @@ projj run status --filter egg --changed --dry-run
 
 ## 任务解析
 
-`status` 只使用现有 explicit task resolution：
+`status` 先使用现有 explicit task resolution：
 
 ```text
 .projj.toml [tasks].status
@@ -49,23 +49,30 @@ Makefile / justfile / Taskfile 的 status
 ~/.projj/config.toml [tasks].status
 ```
 
-不新增这些内置行为：
+如果没有显式 task，内置 fallback 为：
 
 ```text
-git status --short
-git status --branch --porcelain
-branch / upstream / ahead / behind 分析
-JSON 输出
+git status --short --branch
 ```
 
-如果用户希望 `projj status` 运行 `git status --short`，应显式配置：
+这会保留 `run` task 模型，同时让默认输出包含 branch、ahead / behind 和工作区改动信息。
+
+不新增这些独立分析行为：
+
+```text
+内部解析 branch / upstream / ahead / behind
+JSON 输出
+自定义状态块渲染
+```
+
+如果用户希望覆盖默认 status，应显式配置：
 
 ```toml
 [tasks]
 status = "git status --short"
 ```
 
-当前默认配置已经包含全局 `status` task，因此初始化后的常见体验仍是：
+没有任何显式配置时：
 
 ```sh
 projj status
@@ -74,7 +81,7 @@ projj status
 运行：
 
 ```text
-git status --short
+git status --short --branch
 ```
 
 ## 与 run 的关系
@@ -105,19 +112,19 @@ dry-run 使用当前目录短入口文案：
 
 ```text
 Would status current project
-$ git status --short
+$ git status --short --branch
 ```
 
 `--` 后的参数追加到最终解析出的命令：
 
 ```sh
-projj status -- --branch
+projj status -- --ignored
 ```
 
-如果命中全局 task：
+如果使用内置 fallback：
 
 ```text
-git status --short --branch
+git status --short --branch --ignored
 ```
 
 如果命中 package script：
@@ -145,13 +152,11 @@ post_status
 
 ## 错误处理
 
-当前目录找不到 `status` task 时，短入口输出当前目录语义的错误：
+由于 `status` 有内置 fallback，普通 git 仓库中不会因为缺少 task 定义而报找不到 task。
 
-```text
-No status command found in current directory.
-```
+如果 fallback 命令执行失败，返回底层命令的退出码。比如当前目录不是 git 仓库时，`git status --short --branch` 会失败，`projj status` 返回失败码。
 
-`projj run status` 继续使用通用 task-not-found 提示，帮助用户知道可以在哪些 task provider 中定义 `status`。
+`projj run status` 与 `projj status` 使用同一个 resolver，因此也会得到相同 fallback。
 
 ## README 更新
 
@@ -159,18 +164,19 @@ README 需要补充：
 
 - HELP usage 中的 `projj status [--dry-run] [-- ...args]`。
 - `projj status` 小节，说明它是 `projj run status` 的当前目录短入口。
-- 明确 `status` 没有内置 fallback；需要用户通过 `[tasks].status` 或项目 task 定义。
+- 明确 `status` 的内置 fallback 是 `git status --short --branch`。
+- 明确用户可以通过 `[tasks].status` 或项目 task 覆盖默认实现。
 - 批量状态继续使用 `projj run status --all/--filter/--changed`。
 
 ## 验收重点
 
 需要覆盖这些流程：
 
-- `projj status --dry-run` 命中全局 `[tasks].status`。
+- `projj status --dry-run` 在没有显式 task 时命中内置 fallback。
+- 显式 `[tasks].status` 优先于内置 fallback。
 - `projj status` 与当前目录 `projj run status` 使用同一 task resolution。
 - `projj status -- --branch` 会追加参数。
 - `projj status` 触发 `pre_status` / `post_status` hooks。
-- `projj status` 找不到 task 时返回 1，并输出 `No status command found in current directory.`。
+- `projj status` 没有显式 task 时执行 `git status --short --branch`。
 - `projj status --filter egg`、`projj status --all`、`projj status --changed` 被拒绝。
 - `projj run status --all/--filter/--changed` 行为不变。
-

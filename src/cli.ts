@@ -56,6 +56,7 @@ Usage:
   projj hooks run <event> [--all] [--filter <selector>] [--dry-run]
   projj run --list [--all] [--filter <selector>]
   projj run <task> [--all] [--filter <selector>] [-- ...args]
+  projj status [--dry-run] [-- ...args]
   projj start [--dry-run] [-- ...args]
   projj install [--dry-run] [-- ...args]
   projj clean [--dry-run] [-- ...args]
@@ -611,6 +612,7 @@ export function createCli(deps: CliDeps) {
 
             return exitCode;
           }
+          case "status":
           case "start":
           case "install":
           case "clean":

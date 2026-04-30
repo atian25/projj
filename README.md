@@ -19,6 +19,7 @@ eval "$(projj shell-init zsh)"
 projj clone atian25/projj
 projj find egg
 projj find --list
+projj status --dry-run
 projj start --dry-run
 projj install --dry-run
 projj clean --dry-run
@@ -252,6 +253,33 @@ $ go test ./...
 If the command itself prints nothing, there is no extra result output. For example, `git status --short` is silent when a repository is clean.
 
 If `--filter` matches no repositories, `projj` exits with code 1. Batch runs continue after individual repository failures and print a final failure summary to stderr.
+
+### `projj status [--dry-run] [-- ...args]`
+
+Run the current project's `status` task:
+
+```sh
+projj status
+projj status --dry-run
+projj status -- --branch
+projj run status --all
+projj run status --filter egg --changed
+```
+
+`projj status` is shorthand for `projj run status` in the current directory. For multi-repository status checks, use `projj run status --filter/--all`; for changed-only filtering, use `projj run status --changed`.
+
+If no explicit `status` task is found, `projj` falls back to:
+
+```text
+git status --short --branch
+```
+
+Define `status` in project or global tasks to override the default:
+
+```toml
+[tasks]
+status = "git status --short"
+```
 
 ### `projj start [--dry-run] [-- ...args]`
 

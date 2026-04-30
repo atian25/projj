@@ -67,6 +67,10 @@ const MAPPED_FILE_INTENT_FALLBACKS: Record<string, string> = {
   start: "run",
 };
 
+const BUILTIN_INTENT_FALLBACKS: TaskMap = {
+  status: "git status --short --branch",
+};
+
 export async function resolveRunCommand(
   commandOrTask: string,
   args: string[],
@@ -197,7 +201,8 @@ async function resolveIntentFallback(
       cwd,
       "go.mod",
       GO_TASKS,
-    ))
+    )) ??
+    (BUILTIN_INTENT_FALLBACKS[task] ? { command: BUILTIN_INTENT_FALLBACKS[task] } : undefined)
   );
 }
 

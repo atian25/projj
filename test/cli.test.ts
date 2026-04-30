@@ -401,6 +401,75 @@ describe("cli", () => {
     expect(calls).toEqual([{ command: "bun dev --open", cwd }]);
   });
 
+  test("status --dry-run prints resolved current-project command without executing", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const stdout: string[] = [];
+    let calls = 0;
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async () => {
+        calls += 1;
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["status", "--dry-run"]);
+
+    expect(code).toBe(0);
+    expect(calls).toBe(0);
+    expect(stdout.join("")).toBe(
+      "Would status current project\n" +
+        "$ git status --short --branch\n",
+    );
+  });
+
+  test("status executes resolved command in current directory and appends args", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const calls: Array<{ command: string; cwd: string }> = [];
+    await writeFile(join(cwd, ".projj.toml"), '[tasks]\nstatus = "git status --short"\n');
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["status", "--", "--branch"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([{ command: "git status --short --branch", cwd }]);
+  });
+
+  test("status runs built-in fallback when no explicit task is configured", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["status"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([{ command: "git status --short --branch", cwd }]);
+  });
+
   test("install clean and stop dry-run print resolved current-project commands", async () => {
     const home = await tempDir();
 
@@ -529,9 +598,13 @@ describe("cli", () => {
       stderr: (text) => stderr.push(text),
     });
 
-    const code = await cli.run(["install", "--filter", "atian25/*"]);
+    const filterCode = await cli.run(["install", "--filter", "atian25/*"]);
+    const allCode = await cli.run(["status", "--all"]);
+    const changedCode = await cli.run(["status", "--changed"]);
 
-    expect(code).toBe(1);
+    expect(filterCode).toBe(1);
+    expect(allCode).toBe(1);
+    expect(changedCode).toBe(1);
     expect(stderr.join("")).toContain("Unknown option");
   });
 
@@ -709,6 +782,100 @@ describe("cli", () => {
       { command: "pnpm run test", event: undefined },
       { command: "echo tested", event: "post_test" },
     ]);
+  });
+
+  test("status shortcut runs lifecycle hooks around the resolved command", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'status = "git status --short"',
+        'prepare = "echo prepare-status"',
+        'announce = "echo status-done"',
+        "",
+        "[[hooks]]",
+        'event = "pre_status"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_status"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    const calls: Array<{ command: string; event: string | undefined }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, _runCwd, options) => {
+        calls.push({ command, event: options?.env?.PROJJ_EVENT });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["status"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: "echo prepare-status", event: "pre_status" },
+      { command: "git status --short", event: undefined },
+      { command: "echo status-done", event: "post_status" },
+    ]);
+  });
+
+  test("status shortcut skips main command and post hook when pre_status fails", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'status = "git status --short"',
+        'prepare = "echo prepare-status"',
+        'announce = "echo status-done"',
+        "",
+        "[[hooks]]",
+        'event = "pre_status"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_status"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command) => {
+        calls.push(command);
+        return 5;
+      },
+    });
+
+    const code = await cli.run(["status"]);
+
+    expect(code).toBe(5);
+    expect(calls).toEqual(["echo prepare-status"]);
   });
 
   test("install shortcut runs lifecycle hooks around the resolved command", async () => {

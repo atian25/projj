@@ -63,6 +63,26 @@ describe("tasks", () => {
     ).resolves.toBe("git status --short");
   });
 
+  test("resolves status intent fallback when no explicit task matches", async () => {
+    const cwd = await tempDir();
+
+    await expect(resolveTaskCommand("status", [], {}, cwd)).resolves.toBe(
+      "git status --short --branch",
+    );
+  });
+
+  test("explicit status task takes precedence over built-in fallback", async () => {
+    const localCwd = await tempDir();
+    await writeFile(localCwd + "/.projj.toml", '[tasks]\nstatus = "git status --branch --short"\n');
+    await expect(resolveTaskCommand("status", [], {}, localCwd)).resolves.toBe(
+      "git status --branch --short",
+    );
+
+    const globalCwd = await tempDir();
+    await expect(resolveTaskCommand("status", [], { status: "git status" }, globalCwd))
+      .resolves.toBe("git status");
+  });
+
   test("global explicit task takes precedence over language intent fallback", async () => {
     const cwd = await tempDir();
     await writeFile(cwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
