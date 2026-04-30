@@ -57,6 +57,9 @@ Usage:
   projj run --list [--all] [--filter <selector>]
   projj run <task> [--all] [--filter <selector>] [-- ...args]
   projj start [--dry-run] [-- ...args]
+  projj install [--dry-run] [-- ...args]
+  projj clean [--dry-run] [-- ...args]
+  projj stop [--dry-run] [-- ...args]
   projj shell-init <zsh|bash|fish>
 `;
 
@@ -158,6 +161,30 @@ export function createCli(deps: CliDeps) {
     output.stdout(`${colors.command(`$ ${runCommand}`)}\n`);
     if (dryRun) return 0;
     return runShellCommand(runCommand, repo.path);
+  }
+
+  async function runCurrentIntentShortcut(task: string, rest: string[]): Promise<number> {
+    const separatorIndex = rest.indexOf("--");
+    const commandArgs = separatorIndex === -1 ? rest : rest.slice(0, separatorIndex);
+    const extraArgs = separatorIndex === -1 ? [] : rest.slice(separatorIndex + 1);
+    const parsed = parseArgs({
+      args: commandArgs,
+      options: {
+        "dry-run": { type: "boolean", default: false },
+      },
+      allowPositionals: false,
+    });
+
+    const config = await loadConfigOrDefault(configPath, home);
+    return runTaskLifecycle(
+      task,
+      extraArgs,
+      cwd,
+      config,
+      parsed.values["dry-run"],
+      `Would ${task} current project\n`,
+      `No ${task} command found in current directory.\n`,
+    );
   }
 
   return {
@@ -584,29 +611,11 @@ export function createCli(deps: CliDeps) {
 
             return exitCode;
           }
-          case "start": {
-            const separatorIndex = rest.indexOf("--");
-            const commandArgs = separatorIndex === -1 ? rest : rest.slice(0, separatorIndex);
-            const extraArgs = separatorIndex === -1 ? [] : rest.slice(separatorIndex + 1);
-            const parsed = parseArgs({
-              args: commandArgs,
-              options: {
-                "dry-run": { type: "boolean", default: false },
-              },
-              allowPositionals: false,
-            });
-
-            const config = await loadConfigOrDefault(configPath, home);
-            return runTaskLifecycle(
-              "start",
-              extraArgs,
-              cwd,
-              config,
-              parsed.values["dry-run"],
-              "Would start current project\n",
-              "No start command found in current directory.\n",
-            );
-          }
+          case "start":
+          case "install":
+          case "clean":
+          case "stop":
+            return await runCurrentIntentShortcut(command, rest);
           default:
             output.stderr(`unknown command: ${command}\n`);
             return 1;

@@ -348,7 +348,7 @@ describe("cli", () => {
     expect(calls).toBe(0);
     expect(stdout.join("")).toBe(
       "Would run in current directory: test\n" +
-        "$ npm run test\n",
+        "$ pnpm run test\n",
     );
   });
 
@@ -375,7 +375,7 @@ describe("cli", () => {
     expect(calls).toBe(0);
     expect(stdout.join("")).toBe(
       "Would start current project\n" +
-        "$ npm run dev -- --host 0.0.0.0\n",
+        "$ pnpm run dev -- --host 0.0.0.0\n",
     );
   });
 
@@ -399,6 +399,140 @@ describe("cli", () => {
 
     expect(code).toBe(0);
     expect(calls).toEqual([{ command: "bun dev --open", cwd }]);
+  });
+
+  test("install clean and stop dry-run print resolved current-project commands", async () => {
+    const home = await tempDir();
+
+    const installCwd = await tempDir();
+    await writeFile(join(installCwd, "package.json"), JSON.stringify({ scripts: {} }));
+    await writeFile(join(installCwd, "pnpm-lock.yaml"), "");
+    const installStdout: string[] = [];
+    let installCalls = 0;
+    const installCli = createCli({
+      stdout: (text) => installStdout.push(text),
+      stderr: () => {},
+      home,
+      cwd: installCwd,
+      runShellCommand: async () => {
+        installCalls += 1;
+        return 0;
+      },
+    });
+
+    const installCode = await installCli.run(["install", "--dry-run", "--", "--frozen-lockfile"]);
+
+    expect(installCode).toBe(0);
+    expect(installCalls).toBe(0);
+    expect(installStdout.join("")).toBe(
+      "Would install current project\n" +
+        "$ pnpm install --frozen-lockfile\n",
+    );
+
+    const cleanCwd = await tempDir();
+    await writeFile(join(cleanCwd, "Cargo.toml"), "[package]\nname = \"demo\"\n");
+    const cleanStdout: string[] = [];
+    const cleanCli = createCli({
+      stdout: (text) => cleanStdout.push(text),
+      stderr: () => {},
+      home,
+      cwd: cleanCwd,
+    });
+
+    const cleanCode = await cleanCli.run(["clean", "--dry-run"]);
+
+    expect(cleanCode).toBe(0);
+    expect(cleanStdout.join("")).toBe(
+      "Would clean current project\n" +
+        "$ cargo clean\n",
+    );
+
+    const stopCwd = await tempDir();
+    await writeFile(join(stopCwd, "package.json"), JSON.stringify({ scripts: { stop: "vite --stop" } }));
+    const stopStdout: string[] = [];
+    const stopCli = createCli({
+      stdout: (text) => stopStdout.push(text),
+      stderr: () => {},
+      home,
+      cwd: stopCwd,
+    });
+
+    const stopCode = await stopCli.run(["stop", "--dry-run", "--", "--graceful"]);
+
+    expect(stopCode).toBe(0);
+    expect(stopStdout.join("")).toBe(
+      "Would stop current project\n" +
+        "$ pnpm run stop -- --graceful\n",
+    );
+  });
+
+  test("install clean and stop execute resolved commands in current directory", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    await writeFile(
+      join(cwd, ".projj.toml"),
+      [
+        "[tasks]",
+        'install = "pnpm install"',
+        'clean = "pnpm clean"',
+        'stop = "pnpm stop"',
+        "",
+      ].join("\n"),
+    );
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      home,
+      cwd,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    expect(await cli.run(["install"])).toBe(0);
+    expect(await cli.run(["clean"])).toBe(0);
+    expect(await cli.run(["stop", "--", "--graceful"])).toBe(0);
+    expect(calls).toEqual([
+      { command: "pnpm install", cwd },
+      { command: "pnpm clean", cwd },
+      { command: "pnpm stop --graceful", cwd },
+    ]);
+  });
+
+  test("install clean and stop report current-directory not found errors", async () => {
+    const home = await tempDir();
+    const cwd = await tempDir();
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+      home,
+      cwd,
+    });
+
+    expect(await cli.run(["install"])).toBe(1);
+    expect(await cli.run(["clean"])).toBe(1);
+    expect(await cli.run(["stop"])).toBe(1);
+    expect(stderr.join("")).toBe(
+      "No install command found in current directory.\n" +
+        "No clean command found in current directory.\n" +
+        "No stop command found in current directory.\n",
+    );
+  });
+
+  test("intent shortcuts reject repository selection options", async () => {
+    const stderr: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: (text) => stderr.push(text),
+    });
+
+    const code = await cli.run(["install", "--filter", "atian25/*"]);
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toContain("Unknown option");
   });
 
   test("start runs lifecycle hooks around the resolved command", async () => {
@@ -476,7 +610,7 @@ describe("cli", () => {
     expect(calls).toBe(0);
     expect(stdout.join("")).toBe(
       "Would run in current directory: start\n" +
-        "$ npm run dev\n",
+        "$ pnpm run dev\n",
     );
   });
 
@@ -572,9 +706,104 @@ describe("cli", () => {
     expect(code).toBe(0);
     expect(calls).toEqual([
       { command: "echo prepare-test", event: "pre_test" },
-      { command: "npm run test", event: undefined },
+      { command: "pnpm run test", event: undefined },
       { command: "echo tested", event: "post_test" },
     ]);
+  });
+
+  test("install shortcut runs lifecycle hooks around the resolved command", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare-install"',
+        'announce = "echo installed"',
+        "",
+        "[[hooks]]",
+        'event = "pre_install"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_install"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: {} }));
+    await writeFile(join(cwd, "pnpm-lock.yaml"), "");
+    const calls: Array<{ command: string; event: string | undefined }> = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command, _runCwd, options) => {
+        calls.push({ command, event: options?.env?.PROJJ_EVENT });
+        return 0;
+      },
+    });
+
+    const code = await cli.run(["install"]);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: "echo prepare-install", event: "pre_install" },
+      { command: "pnpm install", event: undefined },
+      { command: "echo installed", event: "post_install" },
+    ]);
+  });
+
+  test("install shortcut skips main command and post hook when pre_install fails", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const cwd = await createRepo(base, "github.com", "atian25", "projj");
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        `base = ["${base}"]`,
+        "",
+        "[tasks]",
+        'prepare = "echo prepare-install"',
+        'announce = "echo installed"',
+        "",
+        "[[hooks]]",
+        'event = "pre_install"',
+        'tasks = ["prepare"]',
+        "",
+        "[[hooks]]",
+        'event = "post_install"',
+        'tasks = ["announce"]',
+        "",
+      ].join("\n"),
+    );
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ scripts: {} }));
+    const calls: string[] = [];
+    const cli = createCli({
+      stdout: () => {},
+      stderr: () => {},
+      configPath,
+      home,
+      cwd,
+      runShellCommand: async (command) => {
+        calls.push(command);
+        return 7;
+      },
+    });
+
+    const code = await cli.run(["install"]);
+
+    expect(code).toBe(7);
+    expect(calls).toEqual(["echo prepare-install"]);
   });
 
   test("run raw command does not run lifecycle hooks", async () => {
@@ -659,7 +888,7 @@ describe("cli", () => {
     expect(code).toBe(0);
     expect(calls).toEqual([
       { command: "echo prepare", cwd: repoPath, event: "pre_start" },
-      { command: "npm run dev", cwd: repoPath, event: undefined },
+      { command: "pnpm run dev", cwd: repoPath, event: undefined },
       { command: "echo started", cwd: repoPath, event: "post_start" },
     ]);
   });
@@ -1183,10 +1412,54 @@ describe("cli", () => {
     expect(stdout.join("")).toBe(
       "Would run in 2 repositories: test\n" +
         "==> github.com/atian25/api\n" +
-        "$ npm run test\n" +
+        "$ pnpm run test\n" +
         "==> github.com/atian25/web\n" +
         "$ go test ./...\n",
     );
+  });
+
+  test("run filter supports install clean and stop intents in repositories", async () => {
+    const home = await tempDir();
+    const base = join(home, "repos");
+    const nodePath = await createRepo(base, "github.com", "atian25", "node");
+    const rustPath = await createRepo(base, "github.com", "atian25", "rust");
+    const servicePath = await createRepo(base, "github.com", "atian25", "service");
+    await writeFile(join(nodePath, "package.json"), JSON.stringify({ scripts: {} }));
+    await writeFile(join(nodePath, "pnpm-lock.yaml"), "");
+    await writeFile(join(rustPath, "Cargo.toml"), "[package]\nname = \"demo\"\n");
+    await writeFile(join(servicePath, "package.json"), JSON.stringify({ scripts: { stop: "vite --stop" } }));
+    const configPath = join(home, ".projj", "config.toml");
+    await mkdir(join(home, ".projj"), { recursive: true });
+    await writeFile(configPath, `base = ["${base}"]\nplatform = "github.com"\n`);
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const cli = createCli({
+      stdout: (text) => stdout.push(text),
+      stderr: () => {},
+      configPath,
+      home,
+      runShellCommand: async (command, runCwd) => {
+        calls.push({ command, cwd: runCwd });
+        return 0;
+      },
+    });
+
+    expect(await cli.run(["run", "install", "--filter", "atian25/node", "--dry-run"])).toBe(0);
+    expect(await cli.run(["run", "clean", "--filter", "atian25/rust", "--dry-run"])).toBe(0);
+    expect(await cli.run(["run", "stop", "--filter", "atian25/service"])).toBe(0);
+
+    expect(stdout.join("")).toBe(
+      "Would run in 1 repositories: install\n" +
+        "==> github.com/atian25/node\n" +
+        "$ pnpm install\n" +
+        "Would run in 1 repositories: clean\n" +
+        "==> github.com/atian25/rust\n" +
+        "$ cargo clean\n" +
+        "Running in 1 repositories: stop\n" +
+        "==> github.com/atian25/service\n" +
+        "$ pnpm run stop\n",
+    );
+    expect(calls).toEqual([{ command: "pnpm run stop", cwd: servicePath }]);
   });
 
   test("run --all --dry-run returns 0 with zero repositories", async () => {
@@ -1234,7 +1507,7 @@ describe("cli", () => {
     const code = await cli.run(["run", "test", "--filter", "atian25/*", "--dry-run"]);
 
     expect(code).toBe(1);
-    expect(stdout.join("")).toContain("==> github.com/atian25/good\n$ npm run test\n");
+    expect(stdout.join("")).toContain("==> github.com/atian25/good\n$ pnpm run test\n");
     expect(stderr.join("")).toContain("github.com/atian25/bad: invalid package.json");
   });
 

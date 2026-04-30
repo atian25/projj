@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatTaskList, listRunTasks, resolveRunCommand, resolveStartCommand } from "../src/tasks";
+import {
+  formatTaskList,
+  listRunTasks,
+  resolveRunCommand,
+  resolveStartCommand,
+  resolveTaskCommand,
+} from "../src/tasks";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "projj-tasks-"));
@@ -10,6 +16,22 @@ async function tempDir(): Promise<string> {
 
 async function touch(path: string): Promise<void> {
   await writeFile(path, "");
+}
+
+async function withPath<T>(path: string, callback: () => Promise<T>): Promise<T> {
+  const previous = process.env.PATH;
+  process.env.PATH = path;
+  try {
+    return await callback();
+  } finally {
+    process.env.PATH = previous;
+  }
+}
+
+async function fakeExecutable(dir: string, name: string): Promise<void> {
+  const path = join(dir, name);
+  await writeFile(path, "#!/bin/sh\n");
+  await chmod(path, 0o755);
 }
 
 describe("tasks", () => {
@@ -65,6 +87,7 @@ describe("tasks", () => {
 
     const packageCwd = await tempDir();
     await writeFile(packageCwd + "/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+    await touch(packageCwd + "/package-lock.json");
     await expect(resolveRunCommand("test", ["it's ok"], {}, packageCwd)).resolves.toBe(
       "npm run test -- 'it'\\''s ok'",
     );
@@ -119,6 +142,152 @@ describe("tasks", () => {
     }
   });
 
+  test("detects package manager field before lockfiles", async () => {
+    const cwd = await tempDir();
+    await writeFile(
+      cwd + "/package.json",
+      JSON.stringify({ packageManager: "bun@1.3.12", scripts: { test: "bun test" } }),
+    );
+    await touch(cwd + "/pnpm-lock.yaml");
+
+    await expect(resolveRunCommand("test", [], {}, cwd)).resolves.toBe("bun run test");
+  });
+
+  test("uses available package manager preference when package has no manager signal", async () => {
+    const bin = await tempDir();
+    await fakeExecutable(bin, "bun");
+    await fakeExecutable(bin, "npm");
+
+    await withPath(bin, async () => {
+      const cwd = await tempDir();
+      await writeFile(cwd + "/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+
+      await expect(resolveRunCommand("test", [], {}, cwd)).resolves.toBe("bun run test");
+    });
+  });
+
+  test("falls back to pnpm when package has no manager signal and no manager command is available", async () => {
+    await withPath("", async () => {
+      const cwd = await tempDir();
+      await writeFile(cwd + "/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+
+      await expect(resolveRunCommand("test", [], {}, cwd)).resolves.toBe("pnpm run test");
+    });
+  });
+
+  test("resolves install intent from package manager lockfiles", async () => {
+    const cases = [
+      ["bun.lock", "bun install"],
+      ["bun.lockb", "bun install"],
+      ["pnpm-lock.yaml", "pnpm install"],
+      ["yarn.lock", "yarn install"],
+      ["package-lock.json", "npm install"],
+    ] as const;
+
+    for (const [lockfile, command] of cases) {
+      const cwd = await tempDir();
+      await writeFile(cwd + "/package.json", JSON.stringify({ scripts: {} }));
+      await touch(cwd + "/" + lockfile);
+
+      await expect(resolveTaskCommand("install", [], {}, cwd)).resolves.toBe(command);
+    }
+  });
+
+  test("install intent skips package scripts.install", async () => {
+    const cwd = await tempDir();
+    await writeFile(cwd + "/package.json", JSON.stringify({ scripts: { install: "node-gyp rebuild" } }));
+    await touch(cwd + "/pnpm-lock.yaml");
+
+    await expect(resolveTaskCommand("install", [], {}, cwd)).resolves.toBe("pnpm install");
+  });
+
+  test("resolves explicit install tasks before package install fallback", async () => {
+    const localCwd = await tempDir();
+    await writeFile(localCwd + "/.projj.toml", '[tasks]\ninstall = "corepack pnpm install"\n');
+    await writeFile(localCwd + "/package.json", JSON.stringify({ scripts: {} }));
+    await expect(resolveTaskCommand("install", [], {}, localCwd)).resolves.toBe(
+      "corepack pnpm install",
+    );
+
+    const makeCwd = await tempDir();
+    await writeFile(makeCwd + "/Makefile", "install:\n\t@echo install\n");
+    await writeFile(makeCwd + "/package.json", JSON.stringify({ scripts: {} }));
+    await expect(resolveTaskCommand("install", [], {}, makeCwd)).resolves.toBe("make install");
+
+    const justCwd = await tempDir();
+    await writeFile(justCwd + "/justfile", "install:\n  echo install\n");
+    await writeFile(justCwd + "/package.json", JSON.stringify({ scripts: {} }));
+    await expect(resolveTaskCommand("install", [], {}, justCwd)).resolves.toBe("just install");
+
+    const taskCwd = await tempDir();
+    await writeFile(taskCwd + "/Taskfile.yml", "tasks:\n  install:\n    cmds:\n      - echo install\n");
+    await writeFile(taskCwd + "/package.json", JSON.stringify({ scripts: {} }));
+    await expect(resolveTaskCommand("install", [], {}, taskCwd)).resolves.toBe("task install");
+
+    const globalCwd = await tempDir();
+    await writeFile(globalCwd + "/package.json", JSON.stringify({ scripts: {} }));
+    await expect(resolveTaskCommand("install", [], { install: "mise install" }, globalCwd))
+      .resolves.toBe("mise install");
+  });
+
+  test("does not infer install intent for cargo or go projects", async () => {
+    const cargoCwd = await tempDir();
+    await writeFile(cargoCwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
+    await expect(resolveTaskCommand("install", [], {}, cargoCwd)).resolves.toBeUndefined();
+
+    const goCwd = await tempDir();
+    await writeFile(goCwd + "/go.mod", "module example.com/demo\n");
+    await expect(resolveTaskCommand("install", [], {}, goCwd)).resolves.toBeUndefined();
+  });
+
+  test("resolves clean intent from explicit tasks and cargo fallback", async () => {
+    const packageCwd = await tempDir();
+    await writeFile(packageCwd + "/package.json", JSON.stringify({ scripts: { clean: "rimraf dist" } }));
+    await touch(packageCwd + "/package-lock.json");
+    await expect(resolveTaskCommand("clean", [], {}, packageCwd)).resolves.toBe("npm run clean");
+
+    const makeCwd = await tempDir();
+    await writeFile(makeCwd + "/Makefile", "clean:\n\t@echo clean\n");
+    await expect(resolveTaskCommand("clean", [], {}, makeCwd)).resolves.toBe("make clean");
+
+    const justCwd = await tempDir();
+    await writeFile(justCwd + "/justfile", "clean:\n  echo clean\n");
+    await expect(resolveTaskCommand("clean", [], {}, justCwd)).resolves.toBe("just clean");
+
+    const taskCwd = await tempDir();
+    await writeFile(taskCwd + "/Taskfile.yml", "tasks:\n  clean:\n    cmds:\n      - echo clean\n");
+    await expect(resolveTaskCommand("clean", [], {}, taskCwd)).resolves.toBe("task clean");
+
+    const cargoCwd = await tempDir();
+    await writeFile(cargoCwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
+    await expect(resolveTaskCommand("clean", [], {}, cargoCwd)).resolves.toBe("cargo clean");
+  });
+
+  test("does not infer clean intent from node or go projects without explicit clean task", async () => {
+    const packageCwd = await tempDir();
+    await writeFile(packageCwd + "/package.json", JSON.stringify({ scripts: { build: "vite build" } }));
+    await expect(resolveTaskCommand("clean", [], {}, packageCwd)).resolves.toBeUndefined();
+
+    const goCwd = await tempDir();
+    await writeFile(goCwd + "/go.mod", "module example.com/demo\n");
+    await expect(resolveTaskCommand("clean", [], {}, goCwd)).resolves.toBeUndefined();
+  });
+
+  test("stop intent only resolves explicit tasks", async () => {
+    const packageCwd = await tempDir();
+    await writeFile(packageCwd + "/package.json", JSON.stringify({ scripts: { stop: "vite --stop" } }));
+    await touch(packageCwd + "/package-lock.json");
+    await expect(resolveTaskCommand("stop", [], {}, packageCwd)).resolves.toBe("npm run stop");
+
+    const cargoCwd = await tempDir();
+    await writeFile(cargoCwd + "/Cargo.toml", "[package]\nname = \"demo\"\n");
+    await expect(resolveTaskCommand("stop", [], {}, cargoCwd)).resolves.toBeUndefined();
+
+    const goCwd = await tempDir();
+    await writeFile(goCwd + "/go.mod", "module example.com/demo\n");
+    await expect(resolveTaskCommand("stop", [], {}, goCwd)).resolves.toBeUndefined();
+  });
+
   test("resolves start command from local task before package scripts", async () => {
     const cwd = await tempDir();
     await writeFile(cwd + "/.projj.toml", '[tasks]\nstart = "pnpm dev"\n');
@@ -140,10 +309,12 @@ describe("tasks", () => {
 
     const startCwd = await tempDir();
     await writeFile(startCwd + "/package.json", JSON.stringify({ scripts: { start: "node ." } }));
+    await touch(startCwd + "/package-lock.json");
     await expect(resolveStartCommand([], startCwd)).resolves.toBe("npm run start");
 
     const serveCwd = await tempDir();
     await writeFile(serveCwd + "/package.json", JSON.stringify({ scripts: { serve: "vite" } }));
+    await touch(serveCwd + "/package-lock.json");
     await expect(resolveStartCommand([], serveCwd)).resolves.toBe("npm run serve");
   });
 

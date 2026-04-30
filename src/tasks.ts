@@ -1,5 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { delimiter, join } from "node:path";
 import { parse } from "smol-toml";
 import { shellQuote } from "./run";
 
@@ -39,6 +40,7 @@ const CARGO_TASKS: TaskMap = {
   build: "cargo build",
   check: "cargo check",
   run: "cargo run",
+  clean: "cargo clean",
   bench: "cargo bench",
   doc: "cargo doc",
   fmt: "cargo fmt",
@@ -162,9 +164,11 @@ async function resolveExplicitTask(
   cwd: string,
   globalTasks: TaskMap,
 ): Promise<ResolvedCommand | undefined> {
+  const packageTask =
+    task === "install" ? undefined : await resolvePackageScript(task, cwd);
   return (
     (await resolveProjjTask(task, cwd)) ??
-    (await resolvePackageScript(task, cwd)) ??
+    packageTask ??
     (await resolveMakeTask(task, cwd)) ??
     (await resolveJustTask(task, cwd)) ??
     (await resolveTaskfileTask(task, cwd)) ??
@@ -181,6 +185,7 @@ async function resolveIntentFallback(
     (await resolveFirstTask(TASK_RUNNER_INTENT_FALLBACKS[task] ?? [], cwd, resolveMakeTask)) ??
     (await resolveFirstTask(TASK_RUNNER_INTENT_FALLBACKS[task] ?? [], cwd, resolveJustTask)) ??
     (await resolveFirstTask(TASK_RUNNER_INTENT_FALLBACKS[task] ?? [], cwd, resolveTaskfileTask)) ??
+    (task === "install" ? await resolvePackageInstall(cwd) : undefined) ??
     (await resolveMappedFileTask(
       MAPPED_FILE_INTENT_FALLBACKS[task] ?? task,
       cwd,
@@ -194,6 +199,11 @@ async function resolveIntentFallback(
       GO_TASKS,
     ))
   );
+}
+
+async function resolvePackageInstall(cwd: string): Promise<ResolvedCommand | undefined> {
+  if (!(await exists(join(cwd, "package.json")))) return undefined;
+  return { command: `${await detectPackageManager(cwd)} install` };
 }
 
 async function resolveFirstTask(
@@ -294,11 +304,54 @@ async function listPackageScripts(cwd: string): Promise<TaskListGroup[]> {
 }
 
 async function detectPackageManager(cwd: string): Promise<string> {
+  const packageManager = await readPackageManagerField(cwd);
+  if (packageManager) return packageManager;
+
   if (await exists(join(cwd, "bun.lock"))) return "bun";
   if (await exists(join(cwd, "bun.lockb"))) return "bun";
   if (await exists(join(cwd, "pnpm-lock.yaml"))) return "pnpm";
   if (await exists(join(cwd, "yarn.lock"))) return "yarn";
-  return "npm";
+  if (await exists(join(cwd, "package-lock.json"))) return "npm";
+
+  for (const candidate of ["pnpm", "bun", "yarn", "npm"]) {
+    if (await commandExists(candidate)) return candidate;
+  }
+
+  return "pnpm";
+}
+
+async function readPackageManagerField(cwd: string): Promise<string | undefined> {
+  const raw = await readOptionalFile(join(cwd, "package.json"));
+  if (raw === undefined) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`invalid package.json: ${formatReason(error)}`);
+  }
+
+  if (!isRecord(parsed) || typeof parsed.packageManager !== "string") return undefined;
+  const manager = parsed.packageManager.split("@")[0];
+  return isSupportedPackageManager(manager) ? manager : undefined;
+}
+
+function isSupportedPackageManager(value: string | undefined): value is string {
+  return value === "pnpm" || value === "bun" || value === "yarn" || value === "npm";
+}
+
+async function commandExists(command: string): Promise<boolean> {
+  const path = process.env.PATH ?? "";
+  for (const dir of path.split(delimiter)) {
+    if (!dir) continue;
+    try {
+      await access(join(dir, command), constants.X_OK);
+      return true;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  return false;
 }
 
 async function resolveMakeTask(task: string, cwd: string): Promise<ResolvedCommand | undefined> {

@@ -20,6 +20,9 @@ projj clone atian25/projj
 projj find egg
 projj find --list
 projj start --dry-run
+projj install --dry-run
+projj clean --dry-run
+projj stop --dry-run
 projj run status --all
 ```
 
@@ -159,7 +162,7 @@ projj run status --all --changed
 projj run test --filter egg --changed --dry-run
 ```
 
-Tasks are resolved in the execution directory. `projj` asks each provider to look for an explicit task with the requested name, then asks providers for known intent fallbacks such as `start`, `test`, `build`, and `run`.
+Tasks are resolved in the execution directory. `projj` asks each provider to look for an explicit task with the requested name, then asks providers for known intent fallbacks such as `start`, `install`, `clean`, `stop`, `test`, `build`, and `run`.
 
 Provider explicit lookup:
 
@@ -174,12 +177,15 @@ Intent fallback:
 
 ```text
 package.json scripts  -> intent-specific scripts such as dev/serve for start
+package.json          -> package-manager install for install
 Makefile              -> intent-specific targets such as dev/serve/run for start
 justfile / Justfile   -> intent-specific recipes
 Taskfile.yml          -> intent-specific tasks
-Cargo.toml            -> cargo test/build/check/run/...
+Cargo.toml            -> cargo test/build/check/run/clean/...
 go.mod                -> go test/build/fmt/vet/...
 ```
+
+`install` intentionally skips `package.json` `scripts.install`. In npm-compatible package managers, that script is a lifecycle hook, not the usual "install dependencies" command.
 
 Project-local definitions take precedence over global shortcuts, and all explicit tasks take precedence over intent fallback. For example, if global config defines `[tasks].test`, it wins over Cargo's `cargo test` fallback.
 
@@ -295,6 +301,95 @@ tasks = ["echo started"]
 ```
 
 `pre_start` runs before the resolved startup command. `post_start` runs after the startup command exits successfully.
+
+### `projj install [--dry-run] [-- ...args]`
+
+Install dependencies for the current project:
+
+```sh
+projj install
+projj install --dry-run
+projj install -- --frozen-lockfile
+projj run install --filter 'atian25/*'
+```
+
+`projj install` is shorthand for `projj run install` in the current directory. For multi-repository installs, use `projj run install --filter/--all`.
+
+Resolution order is:
+
+```text
+1. Explicit install tasks:
+   - .projj.toml [tasks].install
+   - Makefile / justfile / Taskfile install
+   - ~/.projj/config.toml [tasks].install
+2. Package manager declared by package.json packageManager:
+   - "packageManager": "pnpm@..." -> pnpm install
+   - "packageManager": "bun@..."  -> bun install
+   - "packageManager": "yarn@..." -> yarn install
+   - "packageManager": "npm@..."  -> npm install
+3. Lockfile fallback:
+   - bun.lock / bun.lockb -> bun install
+   - pnpm-lock.yaml       -> pnpm install
+   - yarn.lock            -> yarn install
+   - package-lock.json    -> npm install
+4. Available command fallback:
+   - pnpm, then bun, then yarn, then npm
+5. Final fallback:
+   - pnpm install
+```
+
+`package.json` `scripts.install` is skipped because it is an npm lifecycle script. Use `.projj.toml`, Makefile, justfile, Taskfile, or global config when a project needs a custom install workflow.
+
+### `projj clean [--dry-run] [-- ...args]`
+
+Clean the current project by resolving an explicit project clean task or a safe language fallback:
+
+```sh
+projj clean
+projj clean --dry-run
+projj run clean --all --dry-run
+```
+
+`projj clean` is shorthand for `projj run clean` in the current directory. For multi-repository cleaning, use `projj run clean --filter/--all`.
+
+Resolution order is:
+
+```text
+1. Explicit clean tasks:
+   - .projj.toml [tasks].clean
+   - package.json scripts.clean
+   - Makefile / justfile / Taskfile clean
+   - ~/.projj/config.toml [tasks].clean
+2. Language fallback:
+   - Cargo.toml -> cargo clean
+```
+
+`projj clean` does not guess destructive cleanup commands. It does not remove `dist`, `tmp`, or `node_modules`, and it does not run `git clean` unless you explicitly define that behavior in a task.
+
+### `projj stop [--dry-run] [-- ...args]`
+
+Stop the current project by resolving an explicit stop task:
+
+```sh
+projj stop
+projj stop --dry-run
+projj stop -- --graceful
+projj run stop --filter 'atian25/*'
+```
+
+`projj stop` is shorthand for `projj run stop` in the current directory. For multi-repository stops, use `projj run stop --filter/--all`.
+
+Resolution order is:
+
+```text
+1. Explicit stop tasks:
+   - .projj.toml [tasks].stop
+   - package.json scripts.stop
+   - Makefile / justfile / Taskfile stop
+   - ~/.projj/config.toml [tasks].stop
+```
+
+`projj stop` does not guess which port or process to kill. Define a `stop` task when a project has a specific shutdown command.
 
 ### `projj shell-init <zsh|bash|fish>`
 

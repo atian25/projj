@@ -25,7 +25,7 @@
 - 修改：`test/tasks.test.ts`
 - 修改：`src/tasks.ts`
 
-- [ ] **步骤 1：补 install 解析测试**
+- [x] **步骤 1：补 install 解析测试**
 
 覆盖：
 
@@ -34,7 +34,7 @@
 - `.projj.toml [tasks].install`、Makefile / justfile / Taskfile 的 `install`、全局 `[tasks].install` 仍可显式命中。
 - `Cargo.toml` 和 `go.mod` 不提供 install fallback。
 
-- [ ] **步骤 2：补 clean / stop 解析测试**
+- [x] **步骤 2：补 clean / stop 解析测试**
 
 覆盖：
 
@@ -43,7 +43,7 @@
 - `go.mod` 不提供 clean fallback。
 - `stop` 只命中显式 stop task，不提供语言或进程类 fallback。
 
-- [ ] **步骤 3：实现 `src/tasks.ts`**
+- [x] **步骤 3：实现 `src/tasks.ts`**
 
 实现要点：
 
@@ -53,7 +53,7 @@
 - Go fallback 不增加 `clean` 或 `install`。
 - `stop` 不需要 fallback，只复用 explicit lookup。
 
-- [ ] **步骤 4：运行 tasks 测试**
+- [x] **步骤 4：运行 tasks 测试**
 
 运行：
 
@@ -69,7 +69,7 @@ bun test test/tasks.test.ts
 - 修改：`test/cli.test.ts`
 - 修改：`src/cli.ts`
 
-- [ ] **步骤 1：补短入口 dry-run 和执行测试**
+- [x] **步骤 1：补短入口 dry-run 和执行测试**
 
 覆盖：
 
@@ -79,7 +79,7 @@ bun test test/tasks.test.ts
 - 三个短入口真实执行时调用解析出的命令，cwd 是当前目录。
 - 三个短入口支持 `-- ...args` 参数追加。
 
-- [ ] **步骤 2：补错误和参数测试**
+- [x] **步骤 2：补错误和参数测试**
 
 覆盖：
 
@@ -89,7 +89,7 @@ bun test test/tasks.test.ts
   - `No stop command found in current directory.`
 - 短入口不接受 `--all` 或 `--filter`，由 `parseArgs` 返回错误并进入统一错误处理。
 
-- [ ] **步骤 3：实现 `src/cli.ts`**
+- [x] **步骤 3：实现 `src/cli.ts`**
 
 实现要点：
 
@@ -108,7 +108,7 @@ projj stop [--dry-run] [-- ...args]
   - `Would clean current project`
   - `Would stop current project`
 
-- [ ] **步骤 4：运行 CLI 测试**
+- [x] **步骤 4：运行 CLI 测试**
 
 运行：
 
@@ -123,7 +123,7 @@ bun test test/cli.test.ts
 **文件：**
 - 修改：`test/cli.test.ts`
 
-- [ ] **步骤 1：补 hooks 测试**
+- [x] **步骤 1：补 hooks 测试**
 
 覆盖一个代表性短入口即可，例如 `install`：
 
@@ -133,7 +133,7 @@ bun test test/cli.test.ts
 
 `clean` 和 `stop` 共享 `runTaskLifecycle`，不需要重复完整失败矩阵；可以用 dry-run 或执行测试确认 task name 传入正确。
 
-- [ ] **步骤 2：运行相关测试**
+- [x] **步骤 2：运行相关测试**
 
 运行：
 
@@ -148,7 +148,7 @@ bun test test/cli.test.ts
 **文件：**
 - 修改：`test/cli.test.ts`
 
-- [ ] **步骤 1：补 `projj run install|clean|stop --filter/--all` 测试**
+- [x] **步骤 1：补 `projj run install|clean|stop --filter/--all` 测试**
 
 覆盖：
 
@@ -156,7 +156,7 @@ bun test test/cli.test.ts
 - `projj run clean --filter <selector> --dry-run` 在 Cargo repo 中解析为 `cargo clean`。
 - `projj run stop --filter <selector>` 命中显式 stop task。
 
-- [ ] **步骤 2：确认无需改 CLI 批量分支**
+- [x] **步骤 2：确认无需改 CLI 批量分支**
 
 这些命令应自动复用现有 `run` 分支。若测试失败，只修复 task resolution 或既有 `runTaskLifecycle` 调用，不新增独立批量逻辑。
 
@@ -165,7 +165,7 @@ bun test test/cli.test.ts
 **文件：**
 - 修改：`README.md`
 
-- [ ] **步骤 1：更新 README**
+- [x] **步骤 1：更新 README**
 
 补充：
 
@@ -176,7 +176,7 @@ bun test test/cli.test.ts
 - 明确 `clean` 不自动删除 `dist`、`tmp`、`node_modules`，不自动 `git clean`。
 - 明确批量使用 `projj run <intent> --filter/--all`。
 
-- [ ] **步骤 2：运行全量验证**
+- [x] **步骤 2：运行全量验证**
 
 运行：
 
@@ -187,11 +187,10 @@ bun run typecheck
 
 预期：全部通过。
 
-- [ ] **步骤 3：检查最终 diff**
+- [x] **步骤 3：检查最终 diff**
 
 确认：
 
 - 没有无关文件改动。
 - README 与实现行为一致。
 - 设计文档、计划文档、测试和代码没有相互矛盾。
-

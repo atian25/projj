@@ -78,10 +78,13 @@ intent fallback
    - ~/.projj/config.toml [tasks].install
 
 2. package dependency install fallback
-   - bun.lock / bun.lockb -> bun install
-   - pnpm-lock.yaml       -> pnpm install
-   - yarn.lock            -> yarn install
-   - package.json         -> npm install
+   - package.json packageManager -> 对应包管理器 install
+   - bun.lock / bun.lockb        -> bun install
+   - pnpm-lock.yaml              -> pnpm install
+   - yarn.lock                   -> yarn install
+   - package-lock.json           -> npm install
+   - 无明确信号时按本机可用命令选择 pnpm / bun / yarn / npm
+   - 仍无可用命令时最终 fallback 为 pnpm install
 ```
 
 不提供 Cargo 或 Go 的 install fallback。`cargo install` 和 `go install` 更接近“安装某个二进制或包”，不是“安装项目依赖”，容易和 `projj install` 的日常语义混淆。
@@ -225,4 +228,3 @@ README 需要增加：
 - 三个短入口支持 `--dry-run` 和 `-- ...args`。
 - 三个 intent 都触发对应 `pre_` / `post_` hooks。
 - 找不到短入口命令时返回 1，并打印当前目录语义的错误。
-
